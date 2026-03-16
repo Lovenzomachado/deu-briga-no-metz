@@ -326,6 +326,10 @@ function applySelection(sel) {
     return map;
   }
 
+  // Atualiza charId conforme o personagem selecionado
+  player.charId = sel.player.id === 'p1' ? 1 : 2;
+  cpu.charId    = sel.cpu.id    === 'p1' ? 1 : 2;
+
   player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames, sel.player.specialFrames));
   cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames, sel.cpu.specialFrames));
 
