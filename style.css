@@ -1,0 +1,263 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --green:   #00ff88;
+  --yellow:  #ffe000;
+  --red:     #ff3c3c;
+  --dark:    #0a0a0f;
+  --panel:   rgba(0,0,0,0.72);
+  --border:  #00ff8855;
+  --font-pixel: 'Press Start 2P', monospace;
+  --font-display: 'Bebas Neue', sans-serif;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--dark);
+  overflow: hidden;
+  font-family: var(--font-pixel);
+}
+
+/* ─── Canvas ─── */
+#gameCanvas {
+  display: block;
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+}
+
+/* ─── UI Overlay ─── */
+#ui-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ─── HUD Top ─── */
+#hud-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 20px 0;
+  gap: 12px;
+}
+
+#player-hud, #cpu-hud {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+#cpu-hud { align-items: flex-end; }
+
+.hud-name {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 2px;
+  color: var(--green);
+  text-shadow: 0 0 8px var(--green);
+}
+
+.health-bar-wrap {
+  width: 100%;
+  max-width: 320px;
+  height: 18px;
+  background: #111;
+  border: 2px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 0 10px #00ff8833;
+}
+.health-bar-wrap.cpu { margin-left: auto; }
+
+.health-bar {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #00c853, var(--green));
+  transition: width 0.15s ease, background 0.3s;
+  transform-origin: left;
+}
+.health-bar.cpu {
+  margin-left: auto;
+  background: linear-gradient(90deg, var(--red), #ff7043);
+  transform-origin: right;
+}
+.health-bar[data-pct="low"], .health-bar.cpu[data-pct="low"] {
+  background: linear-gradient(90deg, #b71c1c, var(--red));
+  animation: hp-flash 0.6s infinite alternate;
+}
+@keyframes hp-flash { from { opacity:1 } to { opacity:0.5 } }
+
+/* ─── Round / Timer ─── */
+#round-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 80px;
+}
+#round-label {
+  font-size: 9px;
+  color: #888;
+  letter-spacing: 1px;
+}
+#timer {
+  font-family: var(--font-display);
+  font-size: 48px;
+  line-height: 1;
+  color: var(--yellow);
+  text-shadow: 0 0 16px var(--yellow), 0 0 32px #ff990066;
+  letter-spacing: 2px;
+}
+
+/* ─── State Badge ─── */
+#state-badge {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1.5px solid var(--green);
+  color: var(--green);
+  font-size: 8px;
+  padding: 6px 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: 2px;
+  box-shadow: 0 0 12px var(--green);
+  opacity: 1;
+  transition: opacity 0.4s;
+  pointer-events: none;
+}
+#state-badge.hidden { opacity: 0; }
+
+/* ─── Controls Bar ─── */
+#controls-bar {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 16px;
+  background: var(--panel);
+  border: 1px solid #ffffff18;
+  border-radius: 4px;
+  padding: 8px 18px;
+  font-size: 7px;
+  color: #aaa;
+  white-space: nowrap;
+}
+#controls-bar span { display: flex; align-items: center; gap: 5px; }
+
+kbd {
+  display: inline-block;
+  background: #1a1a22;
+  border: 1px solid #444;
+  border-bottom: 2px solid #222;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-family: var(--font-pixel);
+  font-size: 6px;
+  color: var(--yellow);
+}
+
+/* ─── Combo / Hit text ─── */
+.hit-text {
+  position: absolute;
+  font-family: var(--font-display);
+  font-size: 52px;
+  color: var(--yellow);
+  text-shadow: 3px 3px 0 #b8860b, 0 0 20px var(--yellow);
+  animation: hit-pop 0.5s forwards;
+  pointer-events: none;
+}
+@keyframes hit-pop {
+  0%   { transform: scale(1.6) rotate(-4deg); opacity:1; }
+  60%  { transform: scale(1) rotate(2deg); opacity:1; }
+  100% { transform: scale(0.8) translateY(-20px); opacity:0; }
+}
+
+/* ─── Scanline overlay ─── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* ─── Screen flash ─── */
+#screen-flash {
+  position: fixed;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 50;
+  transition: opacity 0.08s;
+}
+#screen-flash.active { opacity: 0.35; }
+
+/* ─── Victory / KO overlay ─── */
+#ko-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#ko-overlay.visible { opacity: 1; pointer-events: all; }
+#ko-text {
+  font-family: var(--font-display);
+  font-size: clamp(80px, 18vw, 160px);
+  color: var(--red);
+  text-shadow: 6px 6px 0 #7a0000, 0 0 40px var(--red);
+  animation: ko-shake 0.3s ease;
+  letter-spacing: 8px;
+}
+#ko-sub {
+  font-size: 9px;
+  color: #ccc;
+  margin-top: 12px;
+  letter-spacing: 3px;
+}
+#restart-btn {
+  margin-top: 30px;
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  background: none;
+  border: 2px solid var(--green);
+  color: var(--green);
+  padding: 12px 28px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  pointer-events: all;
+  transition: background 0.2s, color 0.2s;
+  text-shadow: 0 0 6px var(--green);
+  box-shadow: 0 0 12px var(--green);
+}
+#restart-btn:hover {
+  background: var(--green);
+  color: #000;
+  text-shadow: none;
+}
+@keyframes ko-shake {
+  0%,100% { transform: translateX(0) rotate(0); }
+  25% { transform: translateX(-8px) rotate(-2deg); }
+  75% { transform: translateX(8px) rotate(2deg); }
+}
