@@ -311,7 +311,7 @@ function restartGame() {
 
 // ── Aplica a seleção e começa a luta ─────────────────────────────
 function applySelection(sel) {
-  function makeSprites(folder, walkFrames) {
+  function makeSprites(folder, walkFrames, specialFrames) {
     const map = {
       idle:    folder + '/idle.png',
       stance:  folder + '/stance.png',
@@ -319,17 +319,15 @@ function applySelection(sel) {
       kick:    folder + '/kick.png',
       jump:    folder + '/jump.png',
       block:   folder + '/idle.png',
-      special: folder + '/punch.png',
+      special: folder + '/punch.png',  // fallback padrão
     };
-    // Adiciona walk cycle se fornecido
-    if (walkFrames && walkFrames.length > 0) {
-      map.walk = walkFrames;
-    }
+    if (walkFrames   && walkFrames.length   > 0) map.walk    = walkFrames;
+    if (specialFrames && specialFrames.length > 0) map.special = specialFrames;
     return map;
   }
 
-  player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames));
-  cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames));
+  player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames, sel.player.specialFrames));
+  cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames, sel.cpu.specialFrames));
 
   document.querySelector('#player-hud .hud-name').textContent = sel.player.name;
 
