@@ -220,14 +220,14 @@ class Player {
       // Não existe Side Air Heavy
       if (relK && this.heavyCharged) {
         const charged = true;
-        if (down) this._doAttack('ground_pound', 36, 22, 115, opponent, PRIORITY.AERIAL, false, charged);
-        else      this._doAttack('recovery',     34, 18, 105, opponent, PRIORITY.AERIAL, true,  charged);
+        if (down) this._doAttack('ground_pound', 36, 22, 115, opponent, PRIORITY.AERIAL, true,  charged);
+        else      this._doAttack('recovery',     34, 18, 105, opponent, PRIORITY.AERIAL, false, charged);
         this.heavyCharged = false; this.heavyHeld = 0;
         return;
       }
       if (pressK) {
-        if (down) this._doAttack('ground_pound', 32, 20, 115, opponent, PRIORITY.AERIAL, false);
-        else      this._doAttack('recovery',     30, 16, 105, opponent, PRIORITY.AERIAL, true);
+        if (down) this._doAttack('ground_pound', 32, 20, 115, opponent, PRIORITY.AERIAL, true);
+        else      this._doAttack('recovery',     30, 16, 105, opponent, PRIORITY.AERIAL, false);
         return;
       }
     }
@@ -250,14 +250,14 @@ class Player {
       if (relK && this.heavyCharged) {
         const charged = true;
         if (side) this._doAttack('side_heavy',    36, 24, 115, opponent, PRIORITY.HEAVY, false, charged);
-        else if (down) this._doAttack('down_heavy',38, 26, 115, opponent, PRIORITY.HEAVY, false, charged);
+        else if (down) this._doAttack('down_heavy',38, 26, 115, opponent, PRIORITY.HEAVY, true,  charged);
         else           this._doAttack('neutral_heavy',34,22,110, opponent, PRIORITY.HEAVY, false, charged);
         this.heavyCharged = false; this.heavyHeld = 0;
         return;
       }
       if (pressK) {
         if (side)      this._doAttack('side_heavy',    32, 20, 115, opponent, PRIORITY.HEAVY);
-        else if (down) this._doAttack('down_heavy',    34, 22, 115, opponent, PRIORITY.HEAVY);
+        else if (down) this._doAttack('down_heavy',    34, 22, 115, opponent, PRIORITY.HEAVY, true);
         else           this._doAttack('neutral_heavy', 30, 18, 110, opponent, PRIORITY.HEAVY);
         return;
       }
@@ -509,7 +509,7 @@ const ATTACK_BASE_FORCE = {
   air_neutral_light: 7,
   air_side_light:    8,
   air_down_light:    6,
-  recovery:          14,   // launcher
+  recovery:          14,
   ground_pound:      12,
   special:           22,
 };
