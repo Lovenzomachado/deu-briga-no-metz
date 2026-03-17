@@ -445,4 +445,8 @@ function gameLoop(timestamp) {
 gameOver = true;
 updateHUD(); updateSpecialHUD();
 requestAnimationFrame(gameLoop);
-CharSelect.show(applySelection, false);
+
+// Fluxo: Intro → CharSelect → Luta
+Intro.show(() => {
+  CharSelect.show(applySelection, false);
+});
