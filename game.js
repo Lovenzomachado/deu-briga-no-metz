@@ -57,6 +57,35 @@ function drawStageFallback() {
 // ── Hit Texts ───────────────────────────────────────────────────
 const hitTexts = [];
 function spawnHitText(text, x, y) { hitTexts.push({ text, x, y, life: 38, maxLife: 38 }); }
+
+// ── Combo Texts ──────────────────────────────────────────────────
+const comboTexts = [];
+function spawnComboText(count, x, y) {
+  // Remove combo anterior se existir
+  comboTexts.length = 0;
+  comboTexts.push({ count, x, y, life: 50, maxLife: 50 });
+}
+function drawComboTexts() {
+  comboTexts.forEach(c => {
+    const t = 1 - c.life / c.maxLife;
+    ctx.save();
+    ctx.globalAlpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+    const scale = 1 + (1 - t) * 0.3;
+    ctx.translate(c.x, c.y - t * 20);
+    ctx.scale(scale, scale);
+    ctx.font = `bold 32px 'Bebas Neue', sans-serif`;
+    ctx.fillStyle   = '#ff6600';
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur  = 16;
+    ctx.textAlign   = 'center';
+    ctx.fillText(`${c.count} HIT!`, 0, 0);
+    ctx.restore();
+  });
+  for (let i = comboTexts.length - 1; i >= 0; i--) {
+    comboTexts[i].life--;
+    if (comboTexts[i].life <= 0) comboTexts.splice(i, 1);
+  }
+}
 function drawHitTexts() {
   hitTexts.forEach(h => {
     const t = 1 - h.life / h.maxLife;
@@ -100,6 +129,15 @@ const cpu = new Player({
 });
 
 player.onClash = () => { spawnHitText('CLASH!', (player.x+cpu.x)/2, GROUND_Y-80); };
+
+// Combo counter display
+player.onCombo = (count, atk) => {
+  if (count >= 2) {
+    const x = player.x + (player.facing * 60);
+    const y = player.y - player.height - 20;
+    spawnComboText(count, x, y);
+  }
+};
 player.onHit = (dmg, x, y) => {
   spawnHitText(['HIT!','OOF!','CRACK!','UGH!'][Math.floor(Math.random()*4)], x, y);
   triggerFlash(); updateHUD();
@@ -169,33 +207,46 @@ function updateCPU() {
 }
 
 function cpuAttack() {
-  const r     = Math.random();
-  const accum = player.dmgAccum;
+  const r      = Math.random();
+  const accum  = player.dmgAccum;
   const fscale = Math.max(0.5, accum/100 + accum*accum/20000);
 
-  // Helper: cpu ataca com força variável calculada
-  const cpuHit = (state, lock, dmg, baseForce, range, hitstunMs, launcher=false) => {
+  // Helper: CPU ataca usando sistema completo (com hitstop, reação, juggle scaling)
+  const cpuHit = (state, lock, dmg, baseForce, range, hitstunMs, reaction='grounded', launcher=false) => {
     cpu.setState(state, lock);
-    cpu.attackPriority = state.includes('heavy') || state === 'special' ? 3 : state.startsWith('air') ? 1 : 2;
-    if (cpu._inRange(player, range)) {
-      const kn = Math.round(baseForce * fscale);
-      player.takeHit(dmg, cpu, Math.round(hitstunMs/(1000/60)), kn, launcher);
+    cpu.attackPriority = state.includes('heavy') || state === 'special' ? 3
+                       : state.startsWith('air') ? 1 : 2;
+    if (!cpu._inRange(player, range)) return;
+
+    let juggleScale = 1.0;
+    if (player.isAirborne || !player.onGround) {
+      player.juggleCount++;
+      juggleScale = Math.pow(0.80, player.juggleCount - 1);
     }
+    const kn = Math.round(baseForce * fscale * juggleScale);
+    const hf = Math.max(4, Math.round(hitstunMs * juggleScale / (1000/60)));
+
+    cpu.hitstop    = HITSTOP_FRAMES[state] || 3;
+    player.hitstop = cpu.hitstop;
+    cpu.comboCount++; cpu.comboTimer = 90;
+
+    player.takeHit(dmg, cpu, hf, kn, launcher, reaction);
   };
 
   if (!cpu.onGround) {
-    if (r < 0.5) cpuHit('air_neutral_light', 20,  9,  7, 95,  170);
-    else         cpuHit('recovery',          32, 16, 14, 105, 240, true);
+    if (r < 0.5) cpuHit('air_neutral_light', 20,  9,  7,  95, 165, 'grounded');
+    else         cpuHit('recovery',          32, 16, 14, 105, 240, 'grounded', true);
     return;
   }
-  if      (r < 0.30) cpuHit('neutral_light', 18, 10,  8,  90, 170);
-  else if (r < 0.55) cpuHit('side_light',    20, 11,  9,  95, 180);
-  else if (r < 0.70) cpuHit('neutral_heavy', 32, 18, 18, 110, 260);
-  else if (r < 0.82) cpuHit('side_heavy',    32, 20, 20, 115, 260);
-  else if (!cpu.specialUsed && r < 0.92) {
+  if      (r < 0.28) cpuHit('neutral_light',18, 10,  7,  90, 170, 'grounded');
+  else if (r < 0.50) cpuHit('side_light',   20, 11,  8,  95, 180, 'grounded');
+  else if (r < 0.65) cpuHit('neutral_heavy',32, 18, 18, 110, 260, 'knockback');
+  else if (r < 0.78) cpuHit('side_heavy',   32, 20, 20, 115, 260, 'knockback');
+  else if (r < 0.87) cpuHit('down_heavy',   34, 22, 16, 115, 300, 'airborne', true);
+  else if (!cpu.specialUsed && r < 0.95) {
     cpu.specialUsed = true;
-    cpuHit('special', 50, 35, 22, 180, 300);
-  } else             cpuHit('down_light',    22, 12,  7, 100, 190);
+    cpuHit('special', 50, 35, 22, 180, 320, 'knockdown');
+  } else             cpuHit('down_light',   22, 12,  6, 100, 190, 'grounded');
 }
 
 // ── HUD ──────────────────────────────────────────────────────────
@@ -302,9 +353,7 @@ function applySelection(sel) {
     p.hp = p.maxHP; p.x = px; p.y = groundY;
     p.setState('idle'); p.vy = 0; p.onGround = true;
     p.specialUsed = false; p.healPerFrame = 0;
-    p.hitstun = 0; p.locked = false;
-    p.heavyHeld = 0; p.heavyCharged = false;
-    p.dmgAccum = 0; p.vx = 0; p.attackPriority = 0;
+    p.resetCombat();
   };
   resetPlayer(player, 220);
   resetPlayer(cpu, 680);
@@ -358,6 +407,7 @@ function gameLoop(timestamp) {
   cpu.draw(ctx);
   player.draw(ctx);
   drawHitTexts();
+  drawComboTexts();
   drawFlash();
   updateHUD();
   updateSpecialHUD();
