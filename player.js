@@ -30,7 +30,7 @@ class Player {
     this.charId   = config.charId   ?? 1;
 
     // Stats
-    this.maxHP    = 200;
+    this.maxHP    = 500;
     this.hp       = this.maxHP;
     this.dmgAccum = 0;      // acumula dano recebido → escala knockback
     this.speed    = config.speed ?? 1.2;
