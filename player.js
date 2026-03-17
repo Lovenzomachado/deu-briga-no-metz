@@ -117,34 +117,49 @@ class Player {
 
   // ── Sprite atual com fallback ──────────────────────────────────────
   _getCurrentSprite() {
+    // Fallback em cadeia: tenta sprite dedicado → fallback1 → fallback2 → idle
+    // Ordem: sprite do nome exato → sprite legado (nomes antigos) → punch/kick → idle
     const FB = {
-      neutral_light:     'ground_light',
-      side_light:        'ground_light',
-      down_light:        'down_attack',
-      neutral_heavy:     'ground_heavy',
-      side_heavy:        'ground_heavy',
-      down_heavy:        'down_attack',
-      air_neutral_light: 'air_light',
-      air_side_light:    'air_light',
-      air_down_light:    'down_air',
-      recovery:          'anti_air',
-      ground_pound:      'down_air',
-      hitstun:           'hitstun',
-      knockdown:         'hitstun',
-      crouch:            'idle',
+      // Terra leves
+      neutral_light:     ['punch', 'ground_light'],
+      side_light:        ['punch', 'ground_light'],
+      down_light:        ['kick',  'down_attack'],
+      // Terra pesados (Sigs)
+      neutral_heavy:     ['kick',  'ground_heavy'],
+      side_heavy:        ['kick',  'ground_heavy'],
+      down_heavy:        ['kick',  'down_attack'],
+      // Ar leves
+      air_neutral_light: ['punch', 'air_light'],
+      air_side_light:    ['punch', 'air_light'],
+      air_down_light:    ['kick',  'down_air'],
+      // Ar pesados
+      recovery:          ['punch', 'anti_air'],
+      ground_pound:      ['kick',  'down_air'],
+      // Estados
+      hitstun:           ['hitstun'],
+      knockdown:         ['hitstun'],
+      crouch:            ['idle'],
     };
     const tryGet = (k) => {
       const e = this.sprites[k]; if (!e) return null;
       if (Array.isArray(e)) {
+        // Array de frames de animação
         const img = e[this.frame % e.length];
         if (img?.complete && img.naturalWidth > 0) return img;
         const i0 = e[0]; return (i0?.complete && i0.naturalWidth > 0) ? i0 : null;
       }
       return (e.complete && e.naturalWidth > 0) ? e : null;
     };
-    const fb = FB[this.state];
-    return tryGet(this.state) || (fb ? tryGet(fb) : null)
-        || tryGet('stance') || tryGet('idle') || null;
+    // Tenta: sprite exato → cadeia de fallbacks → stance → idle
+    const result = tryGet(this.state);
+    if (result) return result;
+    const fallbacks = FB[this.state];
+    if (fallbacks) {
+      for (const fb of fallbacks) {
+        const r = tryGet(fb); if (r) return r;
+      }
+    }
+    return tryGet('stance') || tryGet('idle') || null;
   }
 
   // ── Update ────────────────────────────────────────────────────────
@@ -324,7 +339,7 @@ class Player {
           if (up || (!down && !side))
                          this._doAttack('neutral_light',18,10, 90,opponent,PRIORITY.LIGHT);
           else if (side) this._doAttack('side_light',   20,11, 95,opponent,PRIORITY.LIGHT);
-          else           this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT);
+          else           this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
         };
         if (inCancel) { this.inputBuffer = fn; return; }
         fn(); return;
@@ -332,7 +347,7 @@ class Player {
       if (relK && this.heavyCharged) {
         const fn = () => {
           if (side)      this._doAttack('side_heavy',   36,24,115,opponent,PRIORITY.HEAVY,false,true);
-          else if (down) this._doAttack('down_heavy',   38,26,115,opponent,PRIORITY.HEAVY,true, true);
+          else if (down) this._doAttack('down_heavy',   38,26,115,opponent,PRIORITY.HEAVY,false,true);
           else           this._doAttack('neutral_heavy',34,22,110,opponent,PRIORITY.HEAVY,false,true);
           this.heavyCharged = false; this.heavyHeld = 0;
         };
@@ -342,7 +357,7 @@ class Player {
       if (pressK) {
         const fn = () => {
           if (side)      this._doAttack('side_heavy',   32,20,115,opponent,PRIORITY.HEAVY);
-          else if (down) this._doAttack('down_heavy',   34,22,115,opponent,PRIORITY.HEAVY,true);
+          else if (down) this._doAttack('down_heavy',   34,22,115,opponent,PRIORITY.HEAVY,false);
           else           this._doAttack('neutral_heavy',30,18,110,opponent,PRIORITY.HEAVY);
         };
         if (inCancel) { this.inputBuffer = fn; return; }
@@ -643,10 +658,10 @@ const PRIORITY = { AERIAL: 1, LIGHT: 2, HEAVY: 3 };
 const HIT_REACTION = {
   neutral_light:     'grounded',
   side_light:        'grounded',
-  down_light:        'grounded',
+  down_light:        'airborne',    // launcher — lança para cima
   neutral_heavy:     'knockback',   // Sig — recua
   side_heavy:        'knockback',   // Sig — recua
-  down_heavy:        'airborne',    // Sig — lança! (launcher)
+  down_heavy:        'knockback',   // Sig — recuo forte
   air_neutral_light: 'grounded',
   air_side_light:    'knockback',
   air_down_light:    'grounded',
