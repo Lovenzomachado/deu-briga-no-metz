@@ -174,6 +174,17 @@ class Player {
 
     if (this.invincible > 0) this.invincible--;
     if (this.hitFlash   > 0) this.hitFlash--;
+    if (this.dashTimer    > 0) this.dashTimer--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+
+    // Dash em andamento: aplica impulso decaindo
+    if (this.isDashing) {
+      this.dashFrames--;
+      if (this.dashFrames <= 0) {
+        this.isDashing = false;
+        this.vx = 0;
+      }
+    }
 
     // ── Combo timer ───────────────────────────────────────────────
     if (this.comboTimer > 0) {
@@ -275,6 +286,41 @@ class Player {
     const pressK = Input.wasPressed('k');
     const holdK  = Input.isHeld('k');
     const relK   = Input.wasReleased('k');
+
+    // ── Dash (double tap) ───────────────────────────────────────
+    if (!this.locked && !this.isDashing && this.dashCooldown <= 0) {
+      const pressLeft  = Input.wasPressed('arrowleft')  || Input.wasPressed('a');
+      const pressRight = Input.wasPressed('arrowright') || Input.wasPressed('d');
+
+      if (pressLeft) {
+        if (this.dashLastDir === 'left' && this.dashTimer > 0) {
+          // Double tap esquerda — dash!
+          this.isDashing   = true;
+          this.dashFrames  = 12;
+          this.vx          = -10;
+          this.dashTimer   = 0;
+          this.dashLastDir = '';
+          this.dashCooldown = 22;
+        } else {
+          this.dashLastDir = 'left';
+          this.dashTimer   = 16; // janela de 16 frames para o segundo toque
+        }
+      }
+      if (pressRight) {
+        if (this.dashLastDir === 'right' && this.dashTimer > 0) {
+          // Double tap direita — dash!
+          this.isDashing   = true;
+          this.dashFrames  = 12;
+          this.vx          = 10;
+          this.dashTimer   = 0;
+          this.dashLastDir = '';
+          this.dashCooldown = 22;
+        } else {
+          this.dashLastDir = 'right';
+          this.dashTimer   = 16;
+        }
+      }
+    }
 
     // Movimento lateral — sempre disponível
     if (!this.locked) {
@@ -555,6 +601,8 @@ class Player {
     this.isAirborne = false; this.knockdown = false;
     this.hitstop = 0; this.hitstun = 0;
     this.heavyHeld = 0; this.heavyCharged = false;
+    this.dashTimer = 0; this.dashLastDir = ''; this.dashCooldown = 0;
+    this.isDashing = false; this.dashFrames = 0;
     this.specialUsed = false; this.healPerFrame = 0;
     this.dmgAccum = 0; this.vx = 0; this.attackPriority = 0;
   }
