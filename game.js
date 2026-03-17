@@ -197,43 +197,202 @@ cpu.loadSprites({
          'sprites/mila/walk/walk7.png','sprites/mila/walk/walk8.png'],
 });
 
-// ── CPU AI ───────────────────────────────────────────────────────
-let cpuActionTimer = 0;
+// ── CPU AI — Advanced Combo System ──────────────────────────────
+// Estados internos da IA:
+//   'idle'    → decidindo o que fazer
+//   'approach'→ se aproximando para atacar
+//   'combo'   → executando sequência de combo
+//   'juggle'  → perseguindo oponente no ar
+//   'retreat' → recuando para se defender
+//   'bait'    → esperando o player errar
+
+let cpuActionTimer  = 0;
+let cpuAIState      = 'idle';
+let cpuComboStep    = 0;    // passo atual da sequência de combo
+let cpuComboSeq     = [];   // sequência de ataques planejada
+let cpuReactionTimer = 0;   // tempo de reação após tomar dano
+
+// ── Sequências de combo do CPU ────────────────────────────────────
+// Cada entrada: [state, lockFrames, dmg, baseForce, range, hitstunMs, reaction, launcher]
+const CPU_COMBOS = {
+  // Combo básico em terra: 2 leves → pesado neutro
+  basic: [
+    ['neutral_light', 18, 10,  7,  90, 170, 'grounded',  false],
+    ['side_light',    20, 11,  8,  95, 180, 'grounded',  false],
+    ['neutral_heavy', 32, 18, 18, 110, 260, 'knockback', false],
+  ],
+  // Combo launcher: leve → down_light (lança) → juggle
+  launcher: [
+    ['side_light',  20, 11,  8,  95, 180, 'grounded', false],
+    ['down_light',  22, 12,  6, 100, 190, 'airborne', true ],
+  ],
+  // Combo aéreo: juggle com 3 hits no ar
+  juggle: [
+    ['air_neutral_light', 20,  9,  7,  95, 165, 'grounded', false],
+    ['air_side_light',    20,  9,  8,  95, 175, 'knockback', false],
+    ['recovery',          32, 16, 14, 105, 240, 'grounded', false],
+  ],
+  // Punish pesado: usado quando o player erra
+  punish: [
+    ['side_heavy',   32, 20, 20, 115, 260, 'knockback', false],
+    ['neutral_heavy',32, 18, 18, 110, 260, 'knockback', false],
+  ],
+  // Ender de combo: fecha com down_heavy (sig)
+  ender: [
+    ['down_heavy', 34, 22, 16, 115, 300, 'knockdown', false],
+  ],
+  // Pressão rápida: 3 leves consecutivos
+  pressure: [
+    ['neutral_light', 18, 10,  7,  90, 170, 'grounded', false],
+    ['neutral_light', 18, 10,  7,  90, 170, 'grounded', false],
+    ['side_light',    20, 11,  8,  95, 180, 'grounded', false],
+  ],
+};
 
 function updateCPU() {
-  if (cpu.locked || cpu.hitstun > 0 || gameOver) return;
+  if (gameOver) return;
+  if (cpu.hitstun > 0) { cpuReactionTimer = 20; return; }
+  if (cpu.locked) return;
+
   cpuActionTimer--;
+  const dist       = Math.abs(cpu.x - player.x);
+  const playerHurt = player.hitstun > 0 || player.isAirborne || player.knockdown;
+  const playerLow  = player.hp / player.maxHP < 0.30;
+  const cpuLow     = cpu.hp / cpu.maxHP < 0.25;
+
+  // ── Continua combo em andamento ──────────────────────────────
+  if (cpuAIState === 'combo' && cpuComboStep < cpuComboSeq.length) {
+    if (cpuActionTimer > 0) return;
+    _cpuExecuteComboStep();
+    return;
+  }
+
+  // ── Continua juggle ───────────────────────────────────────────
+  if (cpuAIState === 'juggle') {
+    if (!player.isAirborne && player.onGround) {
+      cpuAIState = 'idle'; cpuComboStep = 0;
+    } else if (!cpu.onGround) {
+      if (cpuActionTimer <= 0) {
+        cpuActionTimer = 8;
+        _cpuStartCombo('juggle');
+      }
+      return;
+    }
+  }
+
   if (cpuActionTimer > 0) return;
-  cpuActionTimer = 28 + Math.floor(Math.random() * 44);
 
-  const dist = Math.abs(cpu.x - player.x);
-  const roll = Math.random();
+  // ── Decide próxima ação ───────────────────────────────────────
+  const r = Math.random();
 
-  if (dist > 260) {
-    cpu.x += (player.x > cpu.x ? 1 : -1) * cpu.speed * 3;
+  // Reação: se player está no ar por launcher do CPU, persegue
+  if (player.isAirborne && cpu.onGround && dist < 140) {
+    // Pula para continuar o juggle
+    cpu.vy = cpu.jumpForce;
+    cpu.onGround = false;
+    cpu.setState('jump', 20);
+    cpuAIState = 'juggle';
+    cpuActionTimer = 18;
+    return;
+  }
+
+  // Se player está em hitstun e perto → aproveita para combo
+  if (playerHurt && dist < 130 && cpu.onGround) {
+    if (r < 0.75) {
+      _cpuStartCombo(playerLow ? 'ender' : (r < 0.4 ? 'pressure' : 'punish'));
+      return;
+    }
+  }
+
+  // Gerencia distância
+  if (dist > 280) {
+    // Longe demais → se aproxima, às vezes dá dash
+    const dashChance = r < 0.25;
+    if (dashChance) {
+      // Simula dash do CPU
+      cpu.vx = (player.x > cpu.x ? 1 : -1) * 9;
+      cpu.isDashing = true; cpu.dashFrames = 10;
+    } else {
+      cpu.x += (player.x > cpu.x ? 1 : -1) * cpu.speed * 4;
+    }
     cpu.setState('stance');
-  } else if (dist < 80) {
-    if (roll < 0.4) { cpu.x -= (player.x > cpu.x ? 1 : -1) * cpu.speed * 2; cpu.setState('stance'); }
-    else cpuAttack();
+    cpuAIState = 'approach';
+    cpuActionTimer = 14 + Math.floor(Math.random() * 16);
+
+  } else if (dist < 70) {
+    // Muito perto → recua ou ataca imediatamente
+    if (r < 0.35) {
+      cpu.x -= (player.x > cpu.x ? 1 : -1) * cpu.speed * 3;
+      cpu.setState('stance');
+      cpuAIState = 'retreat';
+      cpuActionTimer = 12;
+    } else if (r < 0.55) {
+      // Ataque rápido de perto
+      _cpuStartCombo('pressure');
+    } else {
+      _cpuStartCombo('basic');
+    }
+
   } else {
-    if (roll < 0.45) cpuAttack();
-    else if (roll < 0.65) cpu.setState('block', 22);
-    else { cpu.x += (player.x > cpu.x ? 1 : -1) * cpu.speed * 2; cpu.setState('stance'); }
+    // Range ideal → decide estratégia
+    cpuAIState = 'idle';
+
+    if (cpuLow && !cpu.specialUsed) {
+      // HP baixo → usa especial desesperadamente
+      _cpuSpecial();
+    } else if (r < 0.30) {
+      // Bloqueia para baitar
+      cpu.setState('block', 18 + Math.floor(Math.random() * 14));
+      cpuAIState = 'bait';
+      cpuActionTimer = 22;
+    } else if (r < 0.55) {
+      // Combo launcher
+      _cpuStartCombo('launcher');
+    } else if (r < 0.72) {
+      // Combo básico
+      _cpuStartCombo('basic');
+    } else if (r < 0.84) {
+      // Punish (como se lesse o input do player)
+      cpuActionTimer = 6; // reage rápido
+      _cpuStartCombo('punish');
+    } else if (r < 0.92 && !cpu.specialUsed) {
+      _cpuSpecial();
+    } else {
+      // Avança
+      cpu.x += (player.x > cpu.x ? 1 : -1) * cpu.speed * 2;
+      cpu.setState('stance');
+      cpuActionTimer = 10 + Math.floor(Math.random() * 12);
+    }
   }
 }
 
-function cpuAttack() {
-  const r      = Math.random();
+function _cpuStartCombo(name) {
+  cpuComboSeq  = CPU_COMBOS[name] || CPU_COMBOS.basic;
+  cpuComboStep = 0;
+  cpuAIState   = 'combo';
+  cpuActionTimer = 0; // executa o primeiro passo imediatamente
+  _cpuExecuteComboStep();
+}
+
+function _cpuExecuteComboStep() {
+  if (cpuComboStep >= cpuComboSeq.length) {
+    cpuAIState = 'idle';
+    cpuComboStep = 0;
+    cpuActionTimer = 18 + Math.floor(Math.random() * 20);
+    return;
+  }
+
+  const [state, lock, dmg, baseForce, range, hitstunMs, reaction, launcher]
+    = cpuComboSeq[cpuComboStep];
+
   const accum  = player.dmgAccum;
   const fscale = Math.max(0.5, accum/100 + accum*accum/20000);
 
-  // Helper: CPU ataca usando sistema completo (com hitstop, reação, juggle scaling)
-  const cpuHit = (state, lock, dmg, baseForce, range, hitstunMs, reaction='grounded', launcher=false) => {
-    cpu.setState(state, lock);
-    cpu.attackPriority = state.includes('heavy') || state === 'special' ? 3
-                       : state.startsWith('air') ? 1 : 2;
-    if (!cpu._inRange(player, range)) return;
+  cpu.setState(state, lock);
+  cpu.attackPriority = state.includes('heavy') || state === 'special' ? 3
+                     : state.startsWith('air') ? 1 : 2;
 
+  if (cpu._inRange(player, range)) {
     let juggleScale = 1.0;
     if (player.isAirborne || !player.onGround) {
       player.juggleCount++;
@@ -247,22 +406,37 @@ function cpuAttack() {
     cpu.comboCount++; cpu.comboTimer = 90;
 
     player.takeHit(dmg, cpu, hf, kn, launcher, reaction);
-  };
 
-  if (!cpu.onGround) {
-    if (r < 0.5) cpuHit('air_neutral_light', 20,  9,  7,  95, 165, 'grounded');
-    else         cpuHit('recovery',          32, 16, 14, 105, 240, 'grounded', true);
-    return;
+    // Se lançou o player para o ar → troca para estado juggle
+    if (reaction === 'airborne' || launcher) {
+      cpuAIState = 'juggle';
+      cpuComboStep = 0;
+      cpuActionTimer = 16;
+      return;
+    }
   }
-  if      (r < 0.28) cpuHit('neutral_light',18, 10,  7,  90, 170, 'grounded');
-  else if (r < 0.50) cpuHit('side_light',   20, 11,  8,  95, 180, 'grounded');
-  else if (r < 0.65) cpuHit('neutral_heavy',32, 18, 18, 110, 260, 'knockback');
-  else if (r < 0.78) cpuHit('side_heavy',   32, 20, 20, 115, 260, 'knockback');
-  else if (r < 0.87) cpuHit('down_heavy',   34, 22, 16, 115, 300, 'airborne', true);
-  else if (!cpu.specialUsed && r < 0.95) {
-    cpu.specialUsed = true;
-    cpuHit('special', 50, 35, 22, 180, 320, 'knockdown');
-  } else             cpuHit('down_light',   22, 12,  6, 100, 190, 'grounded');
+
+  cpuComboStep++;
+  // Janela entre hits do combo (simula cancel window)
+  cpuActionTimer = 10 + Math.floor(Math.random() * 6);
+}
+
+function _cpuSpecial() {
+  if (cpu.specialUsed) return;
+  cpu.specialUsed    = true;
+  cpu.attackPriority = 3;
+  cpu.setState('special', 50);
+
+  if (cpu._inRange(player, 180)) {
+    const accum  = player.dmgAccum;
+    const fscale = Math.max(0.5, accum/100 + accum*accum/20000);
+    const kn     = Math.round(28 * fscale);
+    cpu.hitstop = player.hitstop = 6;
+    cpu.comboCount++; cpu.comboTimer = 90;
+    player.takeHit(45, cpu, Math.round(320/(1000/60)), kn, false, 'knockdown');
+  }
+  cpuActionTimer = 40;
+  cpuAIState = 'idle';
 }
 
 // ── HUD ──────────────────────────────────────────────────────────
@@ -383,6 +557,7 @@ function applySelection(sel) {
   };
   resetPlayer(player, 220);
   resetPlayer(cpu, 680);
+  cpuAIState = 'idle'; cpuComboStep = 0; cpuComboSeq = []; cpuActionTimer = 0;
   cpu.facing = -1;
 
   timeLeft = TIMER_SEC; timerTick = 0; gameOver = false;
