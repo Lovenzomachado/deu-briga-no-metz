@@ -151,7 +151,19 @@ cpu.onHit = (dmg, x, y) => {
 player.loadSprites({
   idle: 'sprites/metz/idle.png', stance: 'sprites/metz/stance.png',
   punch: 'sprites/metz/punch.png', kick: 'sprites/metz/kick.png',
-  jump: 'sprites/metz/jump.png', block: 'sprites/metz/stance.png',
+  jump: 'sprites/metz/jump.png', block: 'sprites/metz/idle.png',
+  hitstun: 'sprites/metz/hitstun.png',
+  neutral_light:     'sprites/metz/neutral_light.png',
+  side_light:        'sprites/metz/side_light.png',
+  down_light:        'sprites/metz/down_light.png',
+  neutral_heavy:     'sprites/metz/neutral_heavy.png',
+  side_heavy:        'sprites/metz/side_heavy.png',
+  down_heavy:        'sprites/metz/down_heavy.png',
+  air_neutral_light: 'sprites/metz/air_neutral_light.png',
+  air_side_light:    'sprites/metz/air_side_light.png',
+  air_down_light:    'sprites/metz/air_down_light.png',
+  recovery:          'sprites/metz/recovery.png',
+  ground_pound:      'sprites/metz/ground_pound.png',
   special: ['sprites/metz/special/special1.png','sprites/metz/special/special2.png',
             'sprites/metz/special/special3.png','sprites/metz/special/special4.png',
             'sprites/metz/special/special5.png','sprites/metz/special/special6.png',
@@ -166,15 +178,19 @@ cpu.loadSprites({
   idle: 'sprites/mila/idle.png', stance: 'sprites/mila/stance.png',
   punch: 'sprites/mila/punch.png', kick: 'sprites/mila/kick.png',
   jump: 'sprites/mila/jump.png', block: 'sprites/mila/idle.png',
-  special: 'sprites/mila/punch.png',
   hitstun: 'sprites/mila/hitstun.png',
-  ground_light: 'sprites/mila/ground_light.png',
-  ground_heavy: 'sprites/mila/ground_heavy.png',
-  down_attack:  'sprites/mila/down_attack.png',
-  anti_air:     'sprites/mila/anti_air.png',
-  air_light:    'sprites/mila/air_light.png',
-  air_heavy:    'sprites/mila/air_heavy.png',
-  down_air:     'sprites/mila/down_air.png',
+  neutral_light:     'sprites/mila/neutral_light.png',
+  side_light:        'sprites/mila/side_light.png',
+  down_light:        'sprites/mila/down_light.png',
+  neutral_heavy:     'sprites/mila/neutral_heavy.png',
+  side_heavy:        'sprites/mila/side_heavy.png',
+  down_heavy:        'sprites/mila/down_heavy.png',
+  air_neutral_light: 'sprites/mila/air_neutral_light.png',
+  air_side_light:    'sprites/mila/air_side_light.png',
+  air_down_light:    'sprites/mila/air_down_light.png',
+  recovery:          'sprites/mila/recovery.png',
+  ground_pound:      'sprites/mila/ground_pound.png',
+  special: 'sprites/mila/punch.png',
   walk: ['sprites/mila/walk/walk1.png','sprites/mila/walk/walk2.png',
          'sprites/mila/walk/walk3.png','sprites/mila/walk/walk4.png',
          'sprites/mila/walk/walk5.png','sprites/mila/walk/walk6.png',
@@ -316,25 +332,35 @@ function showKO(winner) {
 // ── Apply selection ───────────────────────────────────────────────
 function applySelection(sel) {
   function makeSprites(folder, walkFrames, specialFrames) {
+    // Cada ataque tem seu sprite dedicado com nome exato.
+    // O _getCurrentSprite() no player.js já tem fallback caso o arquivo não exista.
     const map = {
-      idle: folder+'/idle.png', stance: folder+'/stance.png',
-      punch: folder+'/punch.png', kick: folder+'/kick.png',
-      jump: folder+'/jump.png', block: folder+'/idle.png',
+      idle:    folder+'/idle.png',
+      stance:  folder+'/stance.png',
+      punch:   folder+'/punch.png',
+      kick:    folder+'/kick.png',
+      jump:    folder+'/jump.png',
+      block:   folder+'/idle.png',
       special: folder+'/punch.png',
-      hitstun:          folder+'/hitstun.png',
-      // Ground attacks
-      neutral_light:    folder+'/ground_light.png',
-      side_light:       folder+'/ground_light.png',
-      down_light:       folder+'/down_attack.png',
-      neutral_heavy:    folder+'/ground_heavy.png',
-      side_heavy:       folder+'/ground_heavy.png',
-      down_heavy:       folder+'/down_attack.png',
-      // Air attacks (no Side Air Heavy)
-      air_neutral_light: folder+'/air_light.png',
-      air_side_light:    folder+'/air_light.png',
-      air_down_light:    folder+'/down_air.png',
-      recovery:          folder+'/anti_air.png',
-      ground_pound:      folder+'/down_air.png',
+      hitstun: folder+'/hitstun.png',
+      knockdown: folder+'/hitstun.png',
+
+      // ── 11 ataques — cada um com sprite próprio ────────────────
+      // Terra — leves
+      neutral_light:     folder+'/neutral_light.png',
+      side_light:        folder+'/side_light.png',
+      down_light:        folder+'/down_light.png',
+      // Terra — pesados (Signatures)
+      neutral_heavy:     folder+'/neutral_heavy.png',
+      side_heavy:        folder+'/side_heavy.png',
+      down_heavy:        folder+'/down_heavy.png',
+      // Ar — leves
+      air_neutral_light: folder+'/air_neutral_light.png',
+      air_side_light:    folder+'/air_side_light.png',
+      air_down_light:    folder+'/air_down_light.png',
+      // Ar — pesados (Recovery + Ground Pound, sem Side Air Heavy)
+      recovery:          folder+'/recovery.png',
+      ground_pound:      folder+'/ground_pound.png',
     };
     if (walkFrames    && walkFrames.length    > 0) map.walk    = walkFrames;
     if (specialFrames && specialFrames.length > 0) map.special = specialFrames;
