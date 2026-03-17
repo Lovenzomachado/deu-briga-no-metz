@@ -89,13 +89,13 @@ const groundY = GROUND_Y;
 
 const player = new Player({
   x: 220, y: groundY, groundY,
-  width: 108, height: 136,
+  width: 160, height: 200,
   facing: 1, isPlayer: true, speed: 1.2, charId: 1,
 });
 
 const cpu = new Player({
   x: 680, y: groundY, groundY,
-  width: 108, height: 136,
+  width: 160, height: 200,
   facing: -1, isPlayer: false, speed: 0.9, charId: 2,
 });
 
@@ -316,8 +316,17 @@ function applySelection(sel) {
 }
 
 // ── Main Loop ────────────────────────────────────────────────────
-function gameLoop() {
+// ── Delta time fixo — cap 60fps para igualar desktop e mobile ────
+let lastTime = 0;
+const TARGET_DT = 1000 / 60; // 16.67ms
+
+function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
+
+  // Acumula tempo e só processa quando tiver um frame completo
+  const dt = timestamp - lastTime;
+  if (dt < TARGET_DT * 0.9) return; // ainda não chegou o frame
+  lastTime = timestamp - (dt % TARGET_DT); // corrige drift
 
   if (bgImg.complete && bgImg.naturalWidth > 0) {
     const bw = bgImg.naturalWidth, bh = bgImg.naturalHeight;
@@ -359,5 +368,5 @@ function gameLoop() {
 // ── Start ────────────────────────────────────────────────────────
 gameOver = true;
 updateHUD(); updateSpecialHUD();
-gameLoop();
+requestAnimationFrame(gameLoop);
 CharSelect.show(applySelection, false);
