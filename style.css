@@ -722,3 +722,42 @@ body::after {
   margin-bottom: 8px;
   animation: cs-title-flicker 1.5s infinite;
 }
+
+/* ─── Intro Screen ─── */
+#intro-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+#intro-overlay.visible {
+  opacity: 1;
+}
+
+#intro-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+#intro-press {
+  position: absolute;
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.press-text {
+  font-family: var(--font-pixel);
+  font-size: clamp(8px, 1.8vw, 14px);
+  color: var(--gold);
+  letter-spacing: 4px;
+  text-shadow: 0 0 14px var(--gold), 0 0 28px #f5c51866;
+  white-space: nowrap;
+}
