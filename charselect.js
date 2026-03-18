@@ -271,6 +271,11 @@ const CharSelect = (() => {
     onConfirmCb  = cb;
     confirmedIdx = -1;
     selectedIdx  = 0;
+
+    // Reset: esconde banner VS e remove confirmed dos cards
+    vsBanner.classList.add('hidden');
+    grid.querySelectorAll('.cs-card').forEach(c => c.classList.remove('confirmed'));
+
     // Mostra ou esconde o banner "PLAY AGAIN"
     const bannerEl = document.getElementById('cs-play-again');
     if (bannerEl) bannerEl.style.display = playAgain ? 'block' : 'none';
