@@ -489,22 +489,36 @@ koOverlay.id = 'ko-overlay';
 koOverlay.innerHTML = `
   <div id="ko-text">K.O.</div>
   <div id="ko-sub">PLAYER WINS!</div>
+  <div id="ko-buttons">
+    <button class="ko-btn" id="ko-rematch">▶ REVANCHE</button>
+    <button class="ko-btn" id="ko-charsel">⚔ TROCAR PERSONAGEM</button>
+  </div>
 `;
 document.body.appendChild(koOverlay);
 
+document.getElementById('ko-rematch').addEventListener('click', () => {
+  koOverlay.classList.remove('visible');
+  // Reinicia com os mesmos personagens
+  applySelection(_lastSelection);
+});
+document.getElementById('ko-charsel').addEventListener('click', () => {
+  koOverlay.classList.remove('visible');
+  CharSelect.show(sel => { _lastSelection = sel; applySelection(sel); }, true);
+});
+
+// Guarda a última seleção para revanche
+let _lastSelection = null;
+
 function showKO(winner) {
+  if (gameOver) return; // evita chamar duas vezes
   gameOver = true;
-  koOverlay.classList.add('visible');
   document.getElementById('ko-sub').textContent = winner + ' WINS!';
-  // Após 2s, vai para a charselect com "PLAY AGAIN"
-  setTimeout(() => {
-    koOverlay.classList.remove('visible');
-    CharSelect.show(applySelection, true); // true = show "play again"
-  }, 2000);
+  koOverlay.classList.add('visible');
 }
 
 // ── Apply selection ───────────────────────────────────────────────
 function applySelection(sel) {
+  _lastSelection = sel;
   function makeSprites(folder, walkFrames, specialFrames) {
     // Cada ataque tem seu sprite dedicado com nome exato.
     // O _getCurrentSprite() no player.js já tem fallback caso o arquivo não exista.
@@ -566,17 +580,26 @@ function applySelection(sel) {
 }
 
 // ── Main Loop ────────────────────────────────────────────────────
-// ── Delta time fixo — cap 60fps para igualar desktop e mobile ────
+// ── Game loop com delta time normalizado ─────────────────────────
+// Usa acumulador para que a física rode sempre a 60fps
+// independente do framerate do dispositivo (30hz, 60hz, 120hz)
 let lastTime = 0;
-const TARGET_DT = 1000 / 60; // 16.67ms
+const FIXED_DT = 1000 / 60; // 16.67ms por step
+let accumulator = 0;
 
 function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
 
-  // Acumula tempo e só processa quando tiver um frame completo
-  const dt = timestamp - lastTime;
-  if (dt < TARGET_DT * 0.9) return; // ainda não chegou o frame
-  lastTime = timestamp - (dt % TARGET_DT); // corrige drift
+  if (lastTime === 0) { lastTime = timestamp; return; }
+  const elapsed = Math.min(timestamp - lastTime, 50); // cap 50ms (evita spiral of death)
+  lastTime = timestamp;
+  accumulator += elapsed;
+
+  // Roda steps fixos de 16.67ms — garante mesma velocidade em qualquer Hz
+  while (accumulator >= FIXED_DT) {
+    accumulator -= FIXED_DT;
+    gameStep(); // toda a lógica do jogo aqui
+  }
 
   if (bgImg.complete && bgImg.naturalWidth > 0) {
     const bw = bgImg.naturalWidth, bh = bgImg.naturalHeight;
@@ -590,6 +613,18 @@ function gameLoop(timestamp) {
     drawStageFallback();
   }
 
+  // Lógica roda dentro do acumulador (gameStep)
+  cpu.draw(ctx);
+  player.draw(ctx);
+  drawHitTexts();
+  drawComboTexts();
+  drawFlash();
+  updateHUD();
+  updateSpecialHUD();
+  updateStateBadge();
+}
+
+function gameStep() {
   if (!gameOver) {
     timerTick++;
     if (timerTick >= TIMER_FRAMES) {
@@ -604,15 +639,6 @@ function gameLoop(timestamp) {
     if (player.hp <= 0) showKO('CPU');
     if (cpu.hp    <= 0) showKO('PLAYER');
   }
-
-  cpu.draw(ctx);
-  player.draw(ctx);
-  drawHitTexts();
-  drawComboTexts();
-  drawFlash();
-  updateHUD();
-  updateSpecialHUD();
-  updateStateBadge();
   Input.flush();
 }
 
