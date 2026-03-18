@@ -32,17 +32,46 @@ class Player {
     // Stats
     this.maxHP    = 500;
     this.hp       = this.maxHP;
-    this.dmgAccum = 0;      // acumula dano recebido → escala knockback
+    this.dmgAccum = 0;
     this.speed    = config.speed ?? 1.2;
 
-    // Física
+    // ── Física ────────────────────────────────────────────────────
     this.vy        = 0;
     this.vx        = 0;
     this.gravity   = 0.52;
     this.jumpForce = -14;
     this.onGround  = true;
 
-    // ── State machine ────────────────────────────────────────────
+    // ── Brawlhalla Jump System ────────────────────────────────────
+    // Máximo 4 ações aéreas (jumps + recoveries combinados)
+    // Ex: 3 jumps + 1 recovery  /  2+2  /  1+3
+    this.jumpsLeft     = 3;   // pulos restantes no ar
+    this.recoveriesLeft= 1;   // recoveries restantes no ar
+    this.totalAirActions = 0; // total usado (jumps+recoveries, max 4)
+    this.walkedOffEdge = false; // andou da borda sem pular → só 3 totais
+
+    // ── Fast Fall ─────────────────────────────────────────────────
+    this.isFastFalling = false;
+    this.fastFallSpeed = 1.8;  // multiplicador de gravidade no fast fall
+
+    // ── Dodge System ──────────────────────────────────────────────
+    // Dodge: L → dodge direcional, spot dodge, air dodge
+    // Invulnerável por N frames, depois cooldown
+    this.dodgeState    = 'ready'; // 'ready' | 'dodging' | 'cooldown'
+    this.dodgeTimer    = 0;       // frames restantes do dodge atual
+    this.dodgeCooldown = 0;       // cooldown após dodge
+    this.dodgeInvul    = false;   // invulnerável durante dodge
+    this.dodgeVx       = 0;       // velocidade horizontal do dodge
+    this.dodgeVy       = 0;       // velocidade vertical do dodge
+    this.spotDodge     = false;   // dodge no lugar
+
+    // Gravity Cancel: atacar dentro de 18f de spot dodge aéreo
+    this.gcWindow      = 0;       // frames restantes para GC
+
+    // Chase Dodge: dodge rápido após ataque
+    this.chaseDodgesLeft = 0;     // disponíveis após ataque aterrissar
+
+    // ── State machine ─────────────────────────────────────────────
     this.state      = 'idle';
     this.stateTimer = 0;
     this.locked     = false;
@@ -57,25 +86,28 @@ class Player {
     this.hitFlash       = 0;
     this.invincible     = 0;
     this.attackPriority = 0;
-    this.hitstop        = 0;   // freeze frames no impacto
+    this.hitstop        = 0;
 
     // ── Combo system ──────────────────────────────────────────────
-    this.comboCount     = 0;   // hits consecutivos que este player deu
-    this.comboTimer     = 0;   // frames até o combo expirar
-    this.cancelWindow   = 0;   // frames onde pode cancelar o ataque atual
-    this.lastAttack     = '';  // último ataque executado
-    this.juggleCount    = 0;   // hits no ar (scaling anti-infinite)
+    this.comboCount   = 0;
+    this.comboTimer   = 0;
+    this.cancelWindow = 0;
+    this.lastAttack   = '';
+    this.juggleCount  = 0;
+    this.inputBuffer  = null;
+    this.bufferTimer  = 0;
 
-    // Buffered input: guarda o próximo ataque durante cancel window
-    this.inputBuffer    = null; // { fn } — função a executar
-    this.bufferTimer    = 0;
+    // ── Hit reactions ─────────────────────────────────────────────
+    this.hitReaction = 'grounded';
+    this.isAirborne  = false;
+    this.knockdown   = false;
 
-    // ── Reação de hit ao receber ───────────────────────────────────
-    // 'grounded' | 'knockback' | 'airborne' | 'knockdown'
-    this.hitReaction  = 'grounded';
-    this.isAirborne   = false;  // em juggle (diferente de pulo normal)
-    this.knockdown    = false;
-    this.knockdownTimer = 0;
+    // ── Dash / double-tap ─────────────────────────────────────────
+    this.dashTimer    = 0;
+    this.dashLastDir  = '';
+    this.dashCooldown = 0;
+    this.isDashing    = false;
+    this.dashFrames   = 0;
 
     // ── Heavy charge ──────────────────────────────────────────────
     this.heavyHeld    = 0;
@@ -89,7 +121,7 @@ class Player {
     this.onHit   = null;
     this.onHeal  = null;
     this.onClash = null;
-    this.onCombo = null;  // (count) => chamado a cada hit de combo
+    this.onCombo = null;
   }
 
   // ── Sprites ───────────────────────────────────────────────────────
@@ -139,6 +171,7 @@ class Player {
       hitstun:           ['hitstun'],
       knockdown:         ['hitstun'],
       crouch:            ['idle'],
+      dodge:             ['idle'],
     };
     const tryGet = (k) => {
       const e = this.sprites[k]; if (!e) return null;
@@ -173,17 +206,47 @@ class Player {
     if (this.frameTimer >= 60 / fps) { this.frame++; this.frameTimer = 0; }
 
     if (this.invincible > 0) this.invincible--;
+    if (this.dodgeInvul)     this.invincible = Math.max(this.invincible, 1);
     if (this.hitFlash   > 0) this.hitFlash--;
     if (this.dashTimer    > 0) this.dashTimer--;
     if (this.dashCooldown > 0) this.dashCooldown--;
 
-    // Dash em andamento: aplica impulso decaindo
+    // ── Dodge timer ───────────────────────────────────────────────
+    if (this.dodgeTimer > 0) {
+      this.dodgeTimer--;
+      // Move durante o dodge
+      if (!this.spotDodge) {
+        this.x += this.dodgeVx;
+        if (!this.onGround) {
+          this.y  += this.dodgeVy;
+          this.vy  = this.dodgeVy * 0.3; // amortece velocidade vertical
+        }
+      }
+      if (this.dodgeTimer <= 0) {
+        this.dodgeInvul  = false;
+        this.dodgeState  = 'cooldown';
+        // Cooldown: chão=60f, ar=163f
+        this.dodgeCooldown = this.onGround ? 60 : 163;
+        this.gcWindow = 0;
+      }
+    }
+    if (this.dodgeCooldown > 0) {
+      this.dodgeCooldown--;
+      // Tocar o chão dentro de 75f do air dodge → remove cooldown restante
+      if (this.onGround && this.dodgeState === 'cooldown') {
+        if (this.dodgeCooldown > 163 - 75) this.dodgeCooldown = 75;
+        else { this.dodgeState = 'ready'; this.dodgeCooldown = 0; }
+      }
+      if (this.dodgeCooldown <= 0) this.dodgeState = 'ready';
+    }
+
+    // Gravity Cancel window (18f após spot dodge aéreo)
+    if (this.gcWindow > 0) this.gcWindow--;
+
+    // ── Dash em andamento ─────────────────────────────────────────
     if (this.isDashing) {
       this.dashFrames--;
-      if (this.dashFrames <= 0) {
-        this.isDashing = false;
-        this.vx = 0;
-      }
+      if (this.dashFrames <= 0) { this.isDashing = false; this.vx = 0; }
     }
 
     // ── Combo timer ───────────────────────────────────────────────
@@ -260,75 +323,138 @@ class Player {
 
     // ── Física vertical ───────────────────────────────────────────
     if (!this.onGround) {
-      this.vy += this.gravity;
+      // Fast fall: gravidade aumentada ao segurar ↓ (só após delay pós-pulo)
+      const gravMult = this.isFastFalling ? this.fastFallSpeed : 1.0;
+      this.vy += this.gravity * gravMult;
       this.y  += this.vy;
+
       if (this.y >= this.groundY) {
         this.y = this.groundY; this.vy = 0; this.onGround = true;
-        this.isAirborne = false;
-        this.juggleCount = 0;
+        this.isFastFalling = false;
+        this.isAirborne    = false;
+        this.juggleCount   = 0;
+        // Restaura pulos ao tocar o chão
+        this.jumpsLeft      = 3;
+        this.recoveriesLeft = 1;
+        this.totalAirActions = 0;
+        this.walkedOffEdge  = false;
+        this.chaseDodgesLeft = 0;
         if (!this.locked && this.state !== 'hitstun' && this.state !== 'knockdown')
           this.setState('idle');
       }
+    } else {
+      // No chão: fast fall se segura ↓ (andar da borda)
+      this.isFastFalling = false;
     }
 
     if (opponent && !this.locked) this.facing = opponent.x > this.x ? 1 : -1;
     this.x = Math.max(50, Math.min(900 - 50, this.x));
   }
 
-  // ── Input ─────────────────────────────────────────────────────────
+  // ── Input — Brawlhalla Movement System ──────────────────────────
   _handleInput(opponent) {
-    const down  = Input.isHeld('arrowdown') || Input.isHeld('s');
-    const up    = Input.isHeld('arrowup')   || Input.isHeld('w');
-    const left  = Input.isHeld('arrowleft') || Input.isHeld('a');
-    const right = Input.isHeld('arrowright')|| Input.isHeld('d');
-    const side  = left || right;
+    const down   = Input.isHeld('arrowdown')  || Input.isHeld('s');
+    const up     = Input.isHeld('arrowup')    || Input.isHeld('w');
+    const left   = Input.isHeld('arrowleft')  || Input.isHeld('a');
+    const right  = Input.isHeld('arrowright') || Input.isHeld('d');
+    const side   = left || right;
     const pressJ = Input.wasPressed('j');
     const pressK = Input.wasPressed('k');
     const holdK  = Input.isHeld('k');
     const relK   = Input.wasReleased('k');
+    const pressL = Input.wasPressed('l');
+    const holdL  = Input.isHeld('l');
 
-    // ── Dash (double tap) ───────────────────────────────────────
-    if (!this.locked && !this.isDashing && this.dashCooldown <= 0) {
+    // Não processa movimento durante dodge (exceto fast fall)
+    const inDodge = this.dodgeTimer > 0;
+
+    // ─────────────────────────────────────────────────────────────
+    // DODGE (tecla L)
+    // Brawlhalla: dodge direcional (8 direções) ou spot dodge (sem direção)
+    // Após ataque: Chase Dodge (mais rápido, pode cancelar em ataque)
+    // ─────────────────────────────────────────────────────────────
+    if (pressL && this.dodgeState === 'ready' && this.hitstun <= 0 && !this.locked) {
+      this._doDodge(up, down, left, right, side);
+      return;
+    }
+
+    if (inDodge) {
+      // Gravity Cancel: atacar dentro de 18f de spot dodge aéreo
+      if (this.gcWindow > 0 && !this.onGround) {
+        if (pressJ || pressK) {
+          this._cancelDodgeWithAttack(pressJ, pressK, side, down, up, opponent);
+          return;
+        }
+      }
+      return; // nenhum outro input durante dodge
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // DASH (double-tap lateral)
+    // ─────────────────────────────────────────────────────────────
+    if (!this.locked && !this.isDashing && this.dashCooldown <= 0 && this.onGround) {
       const pressLeft  = Input.wasPressed('arrowleft')  || Input.wasPressed('a');
       const pressRight = Input.wasPressed('arrowright') || Input.wasPressed('d');
-
       if (pressLeft) {
         if (this.dashLastDir === 'left' && this.dashTimer > 0) {
-          // Double tap esquerda — dash!
-          this.isDashing   = true;
-          this.dashFrames  = 12;
-          this.vx          = -10;
-          this.dashTimer   = 0;
-          this.dashLastDir = '';
-          this.dashCooldown = 22;
-        } else {
-          this.dashLastDir = 'left';
-          this.dashTimer   = 16; // janela de 16 frames para o segundo toque
-        }
+          this._startDash(-1);
+        } else { this.dashLastDir = 'left'; this.dashTimer = 16; }
       }
       if (pressRight) {
         if (this.dashLastDir === 'right' && this.dashTimer > 0) {
-          // Double tap direita — dash!
-          this.isDashing   = true;
-          this.dashFrames  = 12;
-          this.vx          = 10;
-          this.dashTimer   = 0;
-          this.dashLastDir = '';
-          this.dashCooldown = 22;
-        } else {
-          this.dashLastDir = 'right';
-          this.dashTimer   = 16;
-        }
+          this._startDash(1);
+        } else { this.dashLastDir = 'right'; this.dashTimer = 16; }
       }
     }
 
-    // Movimento lateral — sempre disponível
+    // ─────────────────────────────────────────────────────────────
+    // MOVIMENTO LATERAL (sempre disponível fora do dodge)
+    // ─────────────────────────────────────────────────────────────
     if (!this.locked) {
-      if (left)  this.x -= this.speed;
-      if (right) this.x += this.speed;
+      const moveSpeed = this.isDashing ? this.speed * 2.5 : this.speed;
+      if (left)  this.x -= moveSpeed;
+      if (right) this.x += moveSpeed;
     }
 
-    // ── Heavy charge ──────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // JUMP — Brawlhalla: máx 4 ações aéreas (jumps+recoveries)
+    // ─────────────────────────────────────────────────────────────
+    if (Input.wasPressed(' ') && !this.locked) {
+      if (this.onGround) {
+        // Pulo do chão
+        const jumpVx = this.isDashing ? (this.vx * 0.8) : 0; // dash jump
+        this.vx = jumpVx;
+        this.vy = this.jumpForce;
+        this.onGround = false;
+        this.jumpsLeft--;
+        this.totalAirActions++;
+        this.isFastFalling = false;
+        this.setState('jump', 20);
+      } else {
+        // Pulo aéreo — usa um dos pulos restantes
+        const maxActions = this.walkedOffEdge ? 3 : 4;
+        if (this.jumpsLeft > 0 && this.totalAirActions < maxActions) {
+          this.vy = this.jumpForce * 0.9; // pulo aéreo ligeiramente menor
+          this.jumpsLeft--;
+          this.totalAirActions++;
+          this.isFastFalling = false;
+          this.setState('jump', 16);
+        }
+      }
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // FAST FALL — segurar ↓ no ar (com delay pós-pulo)
+    // ─────────────────────────────────────────────────────────────
+    if (!this.onGround && down && this.vy > 0 && !this.locked) {
+      this.isFastFalling = true;
+    }
+    if (!down) this.isFastFalling = false;
+
+    // ─────────────────────────────────────────────────────────────
+    // HEAVY CHARGE
+    // ─────────────────────────────────────────────────────────────
     if (holdK && !this.locked) {
       this.heavyHeld++;
       if (this.heavyHeld >= 18) this.heavyCharged = true;
@@ -336,17 +462,46 @@ class Player {
       this.heavyHeld = 0;
     }
 
-    // ── Especial = Down+J no chão ─────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // ESPECIAL (↓+J no chão)
+    // ─────────────────────────────────────────────────────────────
     if (!this.specialUsed && pressJ && down && this.onGround && !this.locked) {
       this._activateSpecial(opponent); return;
     }
 
-    // ── Se em cancel window, qualquer ataque vai para o buffer ────
     const inCancel = this.locked && this.cancelWindow > 0;
 
-    // ═══════════════════════════════════════════════════════════════
+    // ─────────────────────────────────────────────────────────────
+    // RECOVERY (K no ar) — usa recoveriesLeft
+    // ─────────────────────────────────────────────────────────────
+    if (!this.onGround && (!this.locked || inCancel) && (pressK || (relK && this.heavyCharged))) {
+      const maxActions = this.walkedOffEdge ? 3 : 4;
+      const charged    = relK && this.heavyCharged;
+
+      // Recovery conta como ação aérea
+      if (this.recoveriesLeft > 0 && this.totalAirActions < maxActions) {
+        const isExhausted = this.recoveriesLeft < 1; // depois do 1º
+        // Recovery exausto: menos altura, mais dano
+        const fn = () => {
+          if (down) {
+            this._doAttack('ground_pound', 32, charged?26:20, 115, opponent, PRIORITY.AERIAL, true, charged);
+          } else {
+            // Recovery move: dá um pequeno impulso para cima
+            if (!down) { this.vy = Math.min(this.vy, -6); }
+            this._doAttack('recovery', 30, charged?22:16, 105, opponent, PRIORITY.AERIAL, false, charged);
+          }
+          if (charged) { this.heavyCharged = false; this.heavyHeld = 0; }
+        };
+        this.recoveriesLeft--;
+        this.totalAirActions++;
+        if (inCancel) { this.inputBuffer = fn; return; }
+        fn(); return;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // ATAQUES NO AR
-    // ═══════════════════════════════════════════════════════════════
+    // ─────────────────────────────────────────────────────────────
     if (!this.onGround && (!this.locked || inCancel)) {
       if (pressJ) {
         const fn = () => {
@@ -357,28 +512,11 @@ class Player {
         if (inCancel) { this.inputBuffer = fn; return; }
         fn(); return;
       }
-      if (relK && this.heavyCharged) {
-        const fn = () => {
-          if (down) this._doAttack('ground_pound',36,22,115,opponent,PRIORITY.AERIAL,true,true);
-          else      this._doAttack('recovery',    34,18,105,opponent,PRIORITY.AERIAL,false,true);
-          this.heavyCharged = false; this.heavyHeld = 0;
-        };
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
-      }
-      if (pressK) {
-        const fn = () => {
-          if (down) this._doAttack('ground_pound',32,20,115,opponent,PRIORITY.AERIAL,true);
-          else      this._doAttack('recovery',    30,16,105,opponent,PRIORITY.AERIAL,false);
-        };
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
-      }
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // ─────────────────────────────────────────────────────────────
     // ATAQUES NO CHÃO
-    // ═══════════════════════════════════════════════════════════════
+    // ─────────────────────────────────────────────────────────────
     if (this.onGround && (!this.locked || inCancel)) {
       if (pressJ) {
         const fn = () => {
@@ -411,21 +549,19 @@ class Player {
       }
     }
 
-    // ── Block ──────────────────────────────────────────────────────
-    if (Input.isHeld('l') && this.onGround && !this.locked) {
+    // ─────────────────────────────────────────────────────────────
+    // BLOCK (segurar L no chão, sem dodge)
+    // ─────────────────────────────────────────────────────────────
+    if (holdL && this.onGround && !this.locked && this.dodgeState !== 'ready') {
       if (this.state !== 'block') this.setState('block');
       return;
-    } else if (this.state === 'block' && !Input.isHeld('l')) {
+    } else if (this.state === 'block' && !holdL) {
       this.setState('idle');
     }
 
-    // ── Pular ──────────────────────────────────────────────────────
-    if (Input.wasPressed(' ') && this.onGround && !this.locked) {
-      this.vy = this.jumpForce; this.onGround = false;
-      this.setState('jump', 30); return;
-    }
-
-    // ── Idle / walk / crouch ───────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // IDLE / WALK / CROUCH
+    // ─────────────────────────────────────────────────────────────
     if (!this.locked && this.onGround) {
       if (down)      { if (this.state !== 'crouch') this.setState('crouch'); }
       else if (side) this.setState(this.sprites['walk'] ? 'walk' : 'stance');
@@ -433,6 +569,73 @@ class Player {
     }
   }
 
+  // ── Inicia Dodge ──────────────────────────────────────────────────
+  _doDodge(up, down, left, right, side) {
+    const isAir = !this.onGround;
+
+    // Duração por tipo (Brawlhalla exato)
+    // Direcional aéreo=12f, Spot aéreo=20f, Spot terrestre=16f
+    let dur, invulDur, dvx, dvy;
+    const DODGE_SPEED = 6;
+
+    if (!left && !right && !up && !down) {
+      // Spot dodge
+      dur      = isAir ? 20 : 16;
+      invulDur = dur;
+      dvx = 0; dvy = 0;
+      this.spotDodge = true;
+      // Gravity Cancel disponível por 18f após spot dodge aéreo
+      if (isAir) this.gcWindow = 18;
+    } else {
+      // Dodge direcional
+      dur      = 12;
+      invulDur = 12;
+      this.spotDodge = false;
+      dvx = left ? -DODGE_SPEED : right ? DODGE_SPEED : 0;
+      dvy = up   ? -DODGE_SPEED * 0.8 : down ? DODGE_SPEED * 0.6 : 0;
+      // Dodge diagonal para baixo no ar → desliza no chão
+      if (isAir && down) { dvx *= 0.8; }
+    }
+
+    this.dodgeState  = 'dodging';
+    this.dodgeTimer  = dur + 2; // +2 frames de startup
+    this.dodgeInvul  = true;
+    this.invincible  = invulDur;
+    this.dodgeVx     = dvx;
+    this.dodgeVy     = dvy;
+    this.setState('dodge', dur + 2);
+  }
+
+  // ── Gravity Cancel — ataca dentro de 18f de spot dodge aéreo ─────
+  _cancelDodgeWithAttack(pressJ, pressK, side, down, up, opponent) {
+    // Executa ground attack no ar (GC)
+    this.dodgeTimer = 0;
+    this.dodgeInvul = false;
+    this.gcWindow   = 0;
+    this.locked     = false;
+
+    if (pressJ) {
+      if (up || (!down && !side)) this._doAttack('neutral_light',18,10,90,opponent,PRIORITY.LIGHT);
+      else if (side)              this._doAttack('side_light',   20,11,95,opponent,PRIORITY.LIGHT);
+      else                        this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
+    } else if (pressK) {
+      if (side)      this._doAttack('side_heavy',   32,20,115,opponent,PRIORITY.HEAVY);
+      else if (down) this._doAttack('down_heavy',   34,22,115,opponent,PRIORITY.HEAVY,false);
+      else           this._doAttack('neutral_heavy',30,18,110,opponent,PRIORITY.HEAVY);
+    }
+  }
+
+  // ── Inicia Dash ───────────────────────────────────────────────────
+  _startDash(dir) {
+    this.isDashing    = true;
+    this.dashFrames   = 12;
+    this.vx           = dir * 10;
+    this.dashTimer    = 0;
+    this.dashLastDir  = '';
+    this.dashCooldown = 22;
+    // Chase Dodge disponível após ataque: 2 se no chão
+    this.chaseDodgesLeft = 2;
+  }
   // ── Executa ataque ────────────────────────────────────────────────
   _doAttack(stateName, lockFrames, baseDmg, range, opponent,
             priority = PRIORITY.LIGHT, launcher = false, charged = false) {
@@ -603,6 +806,11 @@ class Player {
     this.heavyHeld = 0; this.heavyCharged = false;
     this.dashTimer = 0; this.dashLastDir = ''; this.dashCooldown = 0;
     this.isDashing = false; this.dashFrames = 0;
+    this.jumpsLeft = 3; this.recoveriesLeft = 1;
+    this.totalAirActions = 0; this.walkedOffEdge = false;
+    this.isFastFalling = false;
+    this.dodgeState = 'ready'; this.dodgeTimer = 0; this.dodgeCooldown = 0;
+    this.dodgeInvul = false; this.gcWindow = 0; this.chaseDodgesLeft = 0;
     this.specialUsed = false; this.healPerFrame = 0;
     this.dmgAccum = 0; this.vx = 0; this.attackPriority = 0;
   }
@@ -788,7 +996,7 @@ const ATTACK_BASE_FORCE = {
 // ── FPS de animação ───────────────────────────────────────────────
 const ANIM_FPS = {
   idle: 6, walk: 4, stance: 8, crouch: 6,
-  jump: 10, block: 4, hitstun: 12, knockdown: 8,
+  jump: 10, block: 4, hitstun: 12, knockdown: 8, dodge: 12,
   neutral_light: 20, side_light: 20, down_light: 18,
   neutral_heavy: 12, side_heavy: 12, down_heavy: 12,
   air_neutral_light: 20, air_side_light: 20, air_down_light: 18,
