@@ -761,3 +761,42 @@ body::after {
   text-shadow: 0 0 14px var(--gold), 0 0 28px #f5c51866;
   white-space: nowrap;
 }
+
+/* ─── KO Buttons ─── */
+#ko-buttons {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+  pointer-events: all;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ko-btn {
+  font-family: var(--font-pixel);
+  font-size: 8px;
+  background: none;
+  border: 2px solid var(--gold);
+  color: var(--gold);
+  padding: 14px 22px;
+  cursor: pointer;
+  letter-spacing: 1.5px;
+  transition: background 0.2s, color 0.2s;
+  text-shadow: 0 0 6px var(--gold);
+  box-shadow: 0 0 10px var(--gold);
+  white-space: nowrap;
+}
+.ko-btn:hover, .ko-btn:active {
+  background: var(--gold);
+  color: #000;
+  text-shadow: none;
+}
+#ko-charsel {
+  border-color: #aaa;
+  color: #aaa;
+  text-shadow: none;
+  box-shadow: none;
+}
+#ko-charsel:hover, #ko-charsel:active {
+  background: #aaa;
+  color: #000;
+}
