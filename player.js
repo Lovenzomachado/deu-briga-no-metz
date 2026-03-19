@@ -121,13 +121,9 @@ class Player {
     this.heavyHeld    = 0;
     this.heavyCharged = false;
 
-    // ── Especial ──────────────────────────────────────────────────
-    this.specialUsed  = false;
-    this.healPerFrame = 0;
 
     // Callbacks
     this.onHit   = null;
-    this.onHeal  = null;
     this.onClash = null;
     this.onCombo = null;
   }
@@ -153,7 +149,6 @@ class Player {
   // Reseta frame e frameTimer para reiniciar a animação do novo estado.
   setState(name, duration = 0) {
     if (this.state === name && duration === 0) return;
-    if (this.state === 'special' && name !== 'special') this.healPerFrame = 0;
     this.state      = name;
     this.stateTimer = duration;
     this.frame      = 0;
@@ -314,8 +309,7 @@ class Player {
     }
 
     // ── Knockdown recovery ────────────────────────────────────────
-    // Estado especial após ground_pound ou especial: personagem fica
-    // prostrado no chão por 40 frames antes de poder agir novamente.
+    // Após ground_pound: personagem fica prostrado por 40 frames antes de agir.
     if (this.state === 'knockdown') {
       this.stateTimer--;
       if (this.stateTimer <= 0) {
@@ -342,12 +336,6 @@ class Player {
         this.setState(this.onGround ? 'idle' : 'jump');
         this.attackPriority = 0;
       }
-    }
-
-    // ── Cura do especial ──────────────────────────────────────────
-    if (this.state === 'special' && this.healPerFrame > 0) {
-      this.hp = Math.min(this.maxHP, this.hp + this.healPerFrame);
-      if (this.onHeal) this.onHeal();
     }
 
     // ── Input (só humano, não em hitstun/knockdown) ───────────────
@@ -509,13 +497,6 @@ class Player {
       if (this.heavyHeld >= 18) this.heavyCharged = true;
     } else if (!holdK) {
       this.heavyHeld = 0;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // ESPECIAL (↓+J no chão)
-    // ─────────────────────────────────────────────────────────────
-    if (!this.specialUsed && pressJ && down && this.onGround && !this.locked) {
-      this._activateSpecial(opponent); return;
     }
 
     const inCancel = this.locked && this.cancelWindow > 0;
@@ -771,29 +752,6 @@ class Player {
     if (this.onClash) this.onClash();
   }
 
-  // ── Especial ──────────────────────────────────────────────────────
-  _activateSpecial(opponent) {
-    this.specialUsed    = true;
-    this.attackPriority = PRIORITY.HEAVY;
-
-    if (this.charId === 1) {
-      const F = 140;
-      this.setState('special', F);
-      this.healPerFrame = 60 / F;
-      this.invincible   = F;
-    } else {
-      this.setState('special', 50);
-      if (opponent && this._inRange(opponent, 180)) {
-        const accum  = opponent.dmgAccum;
-        const fscale = Math.max(0.5, accum/100 + accum*accum/20000);
-        const kn     = Math.round(28 * fscale);
-        this.hitstop = opponent.hitstop = 6;
-        this.comboCount++; this.comboTimer = 90;
-        if (this.onCombo) this.onCombo(this.comboCount, 'special');
-        opponent.takeHit(45, this, Math.round(320/(1000/60)), kn, false, 'knockdown');
-      }
-    }
-  }
 
   // ── Receber dano ──────────────────────────────────────────────────
   // Aplica dano, hitstun, knockback e reação visual.
@@ -879,7 +837,6 @@ class Player {
     this.isFastFalling = false;
     this.dodgeState = 'ready'; this.dodgeTimer = 0; this.dodgeCooldown = 0;
     this.dodgeInvul = false; this.gcWindow = 0; this.chaseDodgesLeft = 0;
-    this.specialUsed = false; this.healPerFrame = 0;
     this.dmgAccum = 0; this.vx = 0; this.attackPriority = 0;
   }
 
@@ -941,7 +898,7 @@ class Player {
     ctx.fillRect(cx+w*.02, y+h*.88, w*.22, h*.08);
     const skin = isP1 ? '#c68642' : '#8B5E3C';
     ctx.fillStyle = skin;
-    const LA = ['neutral_light','side_light','air_neutral_light','air_side_light','recovery','special'];
+    const LA = ['neutral_light','side_light','air_neutral_light','air_side_light','recovery'];
     const HA = ['neutral_heavy','side_heavy','down_heavy','down_light','air_down_light','ground_pound'];
     if (LA.includes(this.state)) {
       ctx.fillRect(cx+w*.22, y+h*.32, w*.28, h*.10);
@@ -955,13 +912,6 @@ class Player {
     } else {
       ctx.fillRect(cx-w*.34, y+h*.32, w*.14, h*.26);
       ctx.fillRect(cx+w*.20, y+h*.32, w*.14, h*.26);
-    }
-    if (this.state === 'special') {
-      ctx.save(); ctx.globalAlpha = 0.45 + 0.25*Math.sin(Date.now()/70);
-      const g = ctx.createRadialGradient(cx,y+h*.5,0,cx,y+h*.5,w*.7);
-      g.addColorStop(0, isP1 ? '#00ff88' : '#ff88dd'); g.addColorStop(1,'transparent');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx,y+h*.5,w*.7,0,Math.PI*2); ctx.fill();
-      ctx.restore();
     }
     if (!this.onGround) {
       ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#000';
@@ -994,7 +944,6 @@ const HIT_REACTION = {
   air_down_light:    'grounded',
   recovery:          'grounded',
   ground_pound:      'knockdown',   // bate no chão — derruba
-  special:           'knockdown',
 };
 
 // ── Cancel Windows (frames após ataque para cancelar em outro) ────
@@ -1014,7 +963,6 @@ const CANCEL_WINDOW = {
   air_down_light:     8,
   recovery:           6,
   ground_pound:       4,
-  special:            0,   // especial não cancela em nada
 };
 
 // ── Hitstop (freeze frames no impacto) ────────────────────────────
@@ -1033,7 +981,6 @@ const HITSTOP_FRAMES = {
   air_down_light:     3,
   recovery:           5,
   ground_pound:       7,
-  special:            8,
 };
 
 // ── Hitstun por ataque (ms) ───────────────────────────────────────
@@ -1052,7 +999,6 @@ const HITSTUN_MS = {
   air_down_light:    185,
   recovery:          240,
   ground_pound:      280,
-  special:           320,
 };
 
 // ── Força base (escala com dmgAccum via fórmula Brawlhalla) ───────
@@ -1070,7 +1016,6 @@ const ATTACK_BASE_FORCE = {
   air_down_light:     5,
   recovery:          13,
   ground_pound:      11,
-  special:           22,
 };
 
 // ── FPS de animação ───────────────────────────────────────────────
@@ -1080,5 +1025,5 @@ const ANIM_FPS = {
   neutral_light: 20, side_light: 20, down_light: 18,
   neutral_heavy: 12, side_heavy: 12, down_heavy: 12,
   air_neutral_light: 20, air_side_light: 20, air_down_light: 18,
-  recovery: 14, ground_pound: 14, special: 3,
+  recovery: 14, ground_pound: 14
 };
