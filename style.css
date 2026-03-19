@@ -19,7 +19,7 @@ html, body {
   font-family: var(--font-pixel);
 }
 
-/* ─── Canvas ─── */
+/* â”€â”€â”€ Canvas â”€â”€â”€ */
 #gameCanvas {
   display: block;
   position: fixed;
@@ -29,7 +29,7 @@ html, body {
   z-index: 0;
 }
 
-/* ─── UI Overlay ─── */
+/* â”€â”€â”€ UI Overlay â”€â”€â”€ */
 #ui-overlay {
   position: fixed;
   top: 0; left: 0;
@@ -38,7 +38,7 @@ html, body {
   z-index: 10;
 }
 
-/* ─── HUD Top ─── */
+/* â”€â”€â”€ HUD Top â”€â”€â”€ */
 #hud-top {
   display: flex;
   align-items: flex-start;
@@ -93,7 +93,7 @@ html, body {
 }
 @keyframes hp-flash { from { opacity:1 } to { opacity:0.5 } }
 
-/* ─── Round / Timer ─── */
+/* â”€â”€â”€ Round / Timer â”€â”€â”€ */
 #round-info {
   display: flex;
   flex-direction: column;
@@ -115,7 +115,7 @@ html, body {
   letter-spacing: 2px;
 }
 
-/* ─── State Badge ─── */
+/* â”€â”€â”€ State Badge â”€â”€â”€ */
 #state-badge {
   position: absolute;
   bottom: 80px;
@@ -136,7 +136,7 @@ html, body {
 }
 #state-badge.hidden { opacity: 0; }
 
-/* ─── Controls Bar ─── */
+/* â”€â”€â”€ Controls Bar â”€â”€â”€ */
 #controls-bar {
   position: absolute;
   bottom: 18px;
@@ -166,7 +166,7 @@ kbd {
   color: var(--gold);
 }
 
-/* ─── Scanline overlay ─── */
+/* â”€â”€â”€ Scanline overlay â”€â”€â”€ */
 body::after {
   content: '';
   position: fixed;
@@ -182,7 +182,7 @@ body::after {
   z-index: 100;
 }
 
-/* ─── Victory / KO overlay ─── */
+/* â”€â”€â”€ Victory / KO overlay â”€â”€â”€ */
 #ko-overlay {
   position: fixed;
   inset: 0;
@@ -242,7 +242,7 @@ body::after {
   75% { transform: translateX(8px) rotate(2deg); }
 }
 
-/* ─── Mobile Controls ─── */
+/* â”€â”€â”€ Mobile Controls â”€â”€â”€ */
 #mobile-controls {
   display: none; /* JS mostra se for touch */
   position: absolute;
@@ -291,7 +291,7 @@ body::after {
   box-shadow: 0 0 14px var(--gold);
 }
 
-/* Botões de ação direita */
+/* BotÃµes de aÃ§Ã£o direita */
 #action-btns {
   display: flex;
   flex-direction: column;
@@ -322,41 +322,25 @@ body::after {
   padding: 0 10px;
 }
 
-/* Cores individuais por ação */
+/* Cores individuais por aÃ§Ã£o */
 .btn-punch  { border-color: rgba(255, 100, 60, 0.6);  color: #ff9070; }
 .btn-kick   { border-color: rgba(255, 220, 0, 0.6);   color: var(--gold); }
 .btn-block  { border-color: rgba(80, 180, 255, 0.6);  color: #80c8ff; }
 .btn-jump   { border-color: rgba(0, 255, 136, 0.6);   color: var(--green); min-width: 90px; }
-.btn-special {
-  border-color: rgba(200, 80, 255, 0.7);
-  color: #dd88ff;
-  background: rgba(80, 0, 100, 0.4);
-  min-width: 90px;
-  font-size: 5.5px;
-}
-
-.action-btn.active,
-.action-btn:active {
-  transform: scale(0.91);
-  filter: brightness(1.4);
-}
-.btn-punch.active,  .btn-punch:active  { background: rgba(255, 100, 60, 0.35);  box-shadow: 0 0 12px #ff6040; }
-.btn-kick.active,   .btn-kick:active   { background: rgba(255, 220, 0, 0.35);   box-shadow: 0 0 12px var(--gold); }
 .btn-block.active,  .btn-block:active  { background: rgba(80, 180, 255, 0.35);  box-shadow: 0 0 12px #50b4ff; }
 .btn-jump.active,   .btn-jump:active   { background: rgba(0, 255, 136, 0.3);    box-shadow: 0 0 12px var(--green); }
-.btn-special.active,.btn-special:active{ background: rgba(180, 60, 255, 0.4);   box-shadow: 0 0 16px #cc55ff; }
 
 /* Em mobile, esconde a barra de controles de teclado */
 @media (max-width: 768px) {
   #controls-bar { display: none; }
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    CHARACTER SELECT SCREEN
-══════════════════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-/* O charselect é renderizado inteiramente em Canvas 2D.
-   O overlay só precisa posicionar e exibir o canvas. */
+/* O charselect Ã© renderizado inteiramente em Canvas 2D.
+   O overlay sÃ³ precisa posicionar e exibir o canvas. */
 
 #charselect-overlay {
   position: fixed;
@@ -376,7 +360,7 @@ body::after {
 }
 
 
-/* ── Scanlines sobre tudo ── */
+/* â”€â”€ Scanlines sobre tudo â”€â”€ */
 #charselect-overlay::after {
   content: '';
   position: absolute;
@@ -389,7 +373,7 @@ body::after {
   z-index: 1;
 }
 
-/* ── Fundo animado ── */
+/* â”€â”€ Fundo animado â”€â”€ */
 #cs-bg {
   position: absolute;
   inset: 0;
@@ -404,7 +388,7 @@ body::after {
   to   { filter: brightness(1.1); }
 }
 
-/* ── Header ── */
+/* â”€â”€ Header â”€â”€ */
 #cs-header {
   position: relative;
   z-index: 2;
@@ -432,7 +416,7 @@ body::after {
   98%          { opacity: 0.5; }
 }
 
-/* ── Stage (preview + right panel) ── */
+/* â”€â”€ Stage (preview + right panel) â”€â”€ */
 #cs-stage {
   position: relative;
   z-index: 2;
@@ -444,7 +428,7 @@ body::after {
   padding: 0 24px;
 }
 
-/* ── Preview do personagem ── */
+/* â”€â”€ Preview do personagem â”€â”€ */
 #cs-preview-wrap {
   position: relative;
   flex-shrink: 0;
@@ -467,7 +451,7 @@ body::after {
   filter: drop-shadow(0 8px 24px rgba(0,0,0,0.8));
 }
 
-/* ── Painel direito ── */
+/* â”€â”€ Painel direito â”€â”€ */
 #cs-right {
   flex: 1;
   display: flex;
@@ -475,7 +459,7 @@ body::after {
   gap: 20px;
 }
 
-/* ── Grid de cards ── */
+/* â”€â”€ Grid de cards â”€â”€ */
 #cs-grid {
   display: flex;
   flex-wrap: wrap;
@@ -539,7 +523,7 @@ body::after {
   text-shadow: 0 0 8px var(--char-glow);
 }
 
-/* ── Info do personagem ── */
+/* â”€â”€ Info do personagem â”€â”€ */
 #cs-info {
   border-left: 2px solid #ffffff1a;
   padding-left: 16px;
@@ -559,7 +543,7 @@ body::after {
   letter-spacing: 2px;
 }
 
-/* ── Stats ── */
+/* â”€â”€ Stats â”€â”€ */
 #cs-stats {
   display: flex;
   flex-direction: column;
@@ -590,7 +574,7 @@ body::after {
   transition: width 0.4s cubic-bezier(.22,1,.36,1);
 }
 
-/* ── Hint de controles ── */
+/* â”€â”€ Hint de controles â”€â”€ */
 #cs-confirm-hint {
   font-size: 6px;
   color: #555;
@@ -607,7 +591,7 @@ body::after {
   font-size: 6px;
 }
 
-/* ── Banner VS ── */
+/* â”€â”€ Banner VS â”€â”€ */
 #cs-vs-banner {
   position: absolute;
   inset: 0;
@@ -644,7 +628,7 @@ body::after {
   60%     { transform: scale(1.1) rotate(2deg); }
 }
 
-/* ── Responsivo mobile ── */
+/* â”€â”€ Responsivo mobile â”€â”€ */
 @media (max-width: 600px) {
   #cs-stage {
     flex-direction: column;
@@ -658,45 +642,7 @@ body::after {
   .cs-card-portrait { height: 88px; }
 }
 
-/* ─── Indicador de Especial ─── */
-#special-indicator {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 4px;
-  padding: 4px 10px;
-  background: rgba(0,0,0,0.5);
-  border: 1.5px solid var(--gold);
-  border-radius: 3px;
-  box-shadow: 0 0 10px var(--gold);
-  width: fit-content;
-  transition: all 0.3s;
-  animation: special-pulse 2s ease-in-out infinite;
-}
-#special-indicator.used {
-  border-color: #444;
-  box-shadow: none;
-  opacity: 0.35;
-  animation: none;
-  filter: grayscale(1);
-}
-.special-icon {
-  font-size: 12px;
-}
-.special-label {
-  font-size: 6px;
-  color: var(--gold);
-  letter-spacing: 1.5px;
-}
-#special-indicator.used .special-label {
-  color: #555;
-}
-@keyframes special-pulse {
-  0%, 100% { box-shadow: 0 0 8px var(--gold); }
-  50%       { box-shadow: 0 0 18px var(--gold), 0 0 30px #f5c51844; }
-}
-
-/* ─── D-pad 4 direções ─── */
+/* â”€â”€â”€ D-pad 4 direÃ§Ãµes â”€â”€â”€ */
 #dpad {
   display: flex;
   flex-direction: column;
@@ -717,7 +663,7 @@ body::after {
   height: 28px;
 }
 
-/* ─── Play Again banner ─── */
+/* â”€â”€â”€ Play Again banner â”€â”€â”€ */
 #cs-play-again {
   position: relative;
   z-index: 3;
@@ -731,7 +677,7 @@ body::after {
   animation: cs-title-flicker 1.5s infinite;
 }
 
-/* ─── Intro Screen ─── */
+/* â”€â”€â”€ Intro Screen â”€â”€â”€ */
 #intro-overlay {
   display: none;
   position: fixed;
@@ -770,7 +716,7 @@ body::after {
   white-space: nowrap;
 }
 
-/* ─── KO Buttons ─── */
+/* â”€â”€â”€ KO Buttons â”€â”€â”€ */
 #ko-buttons {
   display: flex;
   gap: 16px;
