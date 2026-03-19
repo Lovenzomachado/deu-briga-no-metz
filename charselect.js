@@ -28,12 +28,6 @@ const CharSelect = (() => {
         'sprites/metz/walk/walk5.png','sprites/metz/walk/walk6.png',
         'sprites/metz/walk/walk7.png','sprites/metz/walk/walk8.png',
       ],
-      specialFrames: [
-        'sprites/metz/special/special1.png','sprites/metz/special/special2.png',
-        'sprites/metz/special/special3.png','sprites/metz/special/special4.png',
-        'sprites/metz/special/special5.png','sprites/metz/special/special6.png',
-        'sprites/metz/special/special7.png',
-      ],
     },
     {
       id:       'mila',
