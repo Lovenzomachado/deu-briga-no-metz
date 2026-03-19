@@ -27,30 +27,21 @@
     if (e.target.closest('#mobile-controls')) e.preventDefault();
   }, { passive: false });
 
-  // ── Botão Especial ────────────────────────────────────────────
-  // Especial = ↓ + J (simula dois inputs simultâneos)
-  function pressSpecial()   { Input.press('arrowdown'); Input.press('j'); }
-  function releaseSpecial() { Input.release('arrowdown'); Input.release('j'); }
-
   // ── Botões de ação (LEVE, FORTE, DODGE) ──────────────────────
   // Cada botão tem data-key com a tecla que simula.
   // touchstart → Input.press, touchend/cancel → Input.release
   // mousedown/up também tratados para testes no desktop via mouse
   document.querySelectorAll('.action-btn').forEach(btn => {
     const key     = btn.dataset.key;
-    const special = btn.dataset.special === 'true';
-
     const onStart = (e) => {
       e.preventDefault();
       btn.classList.add('active'); // feedback visual
-      if (special) pressSpecial();
-      else if (key) Input.press(key);
+      if (key) Input.press(key);
     };
     const onEnd = (e) => {
       e.preventDefault();
       btn.classList.remove('active');
-      if (special) releaseSpecial();
-      else if (key) Input.release(key);
+      if (key) Input.release(key);
     };
 
     btn.addEventListener('touchstart',  onStart, { passive: false });
