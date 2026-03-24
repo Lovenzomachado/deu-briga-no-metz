@@ -1,0 +1,1279 @@
+// ═══════════════════════════════════════════════════════════════════
+// PLAYER — Motor de combate e movimento
+//
+// Este arquivo contém tudo relacionado a um personagem:
+//   • Física: gravidade, pulo, knockback, fast fall
+//   • Movimento: walk, dash (double-tap), dodge (8 direções)
+//   • Combate: 11 ataques (terra + ar), sistema de combos
+//   • Animação: state machine com sprites por estado
+//
+// Combat + Combo System
+// ═══════════════════════════════════════════════════════════════════
+//
+// ATAQUES (11 por personagem, estilo Brawlhalla):
+//   Terra:  neutral_light / side_light / down_light
+//           neutral_heavy / side_heavy / down_heavy  (Signatures)
+//   Ar:     air_neutral_light / air_side_light / air_down_light
+//           recovery (neutral air heavy) / ground_pound (down air heavy)
+//
+// COMBO SYSTEM (estilo KOF/SF):
+//   • Cancel windows: ataques leves cancelam em outros dentro de X frames
+//   • Hit reactions: light=grounded, heavy=knockback, launcher=airborne
+//   • Juggle system: cada hit no ar reduz hitstun (scaling)
+//   • Hitstop: pausa de frames no impacto (game feel)
+//   • Combo counter: conta hits e exibe combo
+//
+// FORÇA VARIÁVEL (Brawlhalla):
+//   force = baseForce * (dmgAccum/100 + dmgAccum²/20000)
+
+class Player {
+  constructor(config) {
+    this.x        = config.x        ?? 200;
+    this.y        = config.y        ?? 0;
+    this.groundY  = config.groundY  ?? 420;
+    this.width    = config.width    ?? 96;
+    this.height   = config.height   ?? 128;
+    this.facing   = config.facing   ?? 1;
+    this.isPlayer = config.isPlayer ?? true;
+    this.charId   = config.charId   ?? 1;
+
+    // Stats
+    this.maxHP    = 500;
+    this.hp       = this.maxHP;
+    this.dmgAccum = 0;
+    this.speed    = config.speed ?? 1.2;
+
+    // ── Física ────────────────────────────────────────────────────
+    this.vy        = 0;
+    this.vx        = 0;
+    this.gravity   = 0.52;
+    this.jumpForce = -14;
+    this.onGround  = true;
+
+    // ── Brawlhalla Jump System ────────────────────────────────────
+    // Máximo 4 ações aéreas (jumps + recoveries combinados)
+    // Ex: 3 jumps + 1 recovery  /  2+2  /  1+3
+    this.jumpsLeft     = 3;   // pulos restantes no ar
+    this.recoveriesLeft= 1;   // recoveries restantes no ar
+    this.totalAirActions = 0; // total usado (jumps+recoveries, max 4)
+    this.walkedOffEdge = false; // andou da borda sem pular → só 3 totais
+
+    // ── Fast Fall ─────────────────────────────────────────────────
+    this.isFastFalling = false;
+    this.fastFallSpeed = 1.8;  // multiplicador de gravidade no fast fall
+
+    // ── Dodge System ──────────────────────────────────────────────
+    // Dodge: L → dodge direcional, spot dodge, air dodge
+    // Invulnerável por N frames, depois cooldown
+    this.dodgeState    = 'ready'; // 'ready' | 'dodging' | 'cooldown'
+    this.dodgeTimer    = 0;       // frames restantes do dodge atual
+    this.dodgeCooldown = 0;       // cooldown após dodge
+    this.dodgeInvul    = false;   // invulnerável durante dodge
+    this.dodgeVx       = 0;       // velocidade horizontal do dodge
+    this.dodgeVy       = 0;       // velocidade vertical do dodge
+    this.spotDodge     = false;   // dodge no lugar
+
+    // Gravity Cancel: atacar dentro de 18f de spot dodge aéreo
+    this.gcWindow      = 0;       // frames restantes para GC
+
+    // Chase Dodge: dodge rápido após ataque
+    this.chaseDodgesLeft = 0;     // disponíveis após ataque aterrissar
+
+    // ── State machine ─────────────────────────────────────────────
+    this.state      = 'idle';
+    this.stateTimer = 0;
+    this.locked     = false;
+
+    // ── Animação ──────────────────────────────────────────────────
+    this.frame      = 0;
+    this.frameTimer = 0;
+    this.sprites    = {};
+
+    // ── Combate base ──────────────────────────────────────────────
+    this.hitstun        = 0;
+    this.hitFlash       = 0;
+    this.invincible     = 0;
+    this.attackPriority = 0;
+    this.hitstop        = 0;
+
+    // ── Combo system ──────────────────────────────────────────────
+    this.comboCount   = 0;
+    this.comboTimer   = 0;
+    this.cancelWindow = 0;
+    this.lastAttack   = '';
+    this.juggleCount  = 0;
+    this.inputBuffer  = null;
+    this.bufferTimer  = 0;
+
+    // ── Hit reactions ─────────────────────────────────────────────
+    this.hitReaction = 'grounded';
+    this.isAirborne  = false;
+    this.knockdown   = false;
+
+    // ── Dash / double-tap ─────────────────────────────────────────
+    this.dashTimer    = 0;
+    this.dashLastDir  = '';
+    this.dashCooldown = 0;
+    this.isDashing    = false;
+    this.dashFrames   = 0;
+
+    // ── Heavy charge ──────────────────────────────────────────────
+    this.heavyHeld    = 0;
+    this.heavyCharged = false;
+
+
+    // ── Hitbox / Hurtbox ──────────────────────────────────────────
+    // activeHitboxes: círculos ativos do ataque atual (relativos ao personagem)
+    // hurtboxes: círculos que recebem dano (fixos, relativos ao personagem)
+    // moveset: frame data de todos os ataques do personagem
+    this.activeHitboxes = [];
+    this.hurtboxes      = DEFAULT_HURTBOXES;
+    this._pendingHit    = null;
+    this.moveset        = null; // definido em loadMoveset()
+    this.hitRegistered  = false; // evita multi-hit no mesmo ataque
+
+    // Callbacks
+    this.onHit   = null;
+    this.onClash = null;
+    this.onCombo = null;
+  }
+
+  // ── Sprites ───────────────────────────────────────────────────────
+  // Aceita { estado: 'caminho.png' } ou { estado: ['frame1.png', ...] }
+  // Sprites de efeito: se existir estado+'_fx' no map, é desenhado
+  // por cima do personagem sem distorcer (proporcional).
+  loadSprites(map) {
+    this.sprites = {};
+    for (const [k, v] of Object.entries(map)) {
+      if (Array.isArray(v)) {
+        this.sprites[k] = v.map(s => { const i = new Image(); i.src = s; return i; });
+      } else {
+        const i = new Image(); i.src = v; this.sprites[k] = i;
+      }
+    }
+    // Auto-detect _fx: tenta carregar [estado]_fx.png para cada estado
+    // (ex: side_heavy_fx.png, down_heavy_fx.png)
+    for (const k of Object.keys(map)) {
+      if (k.endsWith('_fx')) continue; // já é fx
+      const base = typeof map[k] === 'string' ? map[k] : null;
+      if (!base) continue;
+      const fxPath = base.replace('.png', '_fx.png');
+      const fxKey  = k + '_fx';
+      if (!(fxKey in map)) {
+        const img = new Image();
+        img.src = fxPath;
+        this.sprites[fxKey] = img;
+      }
+    }
+  }
+
+  // ── Moveset ──────────────────────────────────────────────────────
+  // Carrega o moveset do personagem conforme charId.
+  // Deve ser chamado após definir this.charId.
+  loadMoveset() {
+    this.moveset   = MOVESETS[this.charId] || MOVESET_HENRIQUE;
+    this.hurtboxes = DEFAULT_HURTBOXES;
+  }
+
+  // ── Estado ────────────────────────────────────────────────────────
+  // Muda o estado do personagem. duration > 0 = estado bloqueado
+  // (não pode ser interrompido até stateTimer zerar).
+  // Reseta frame e frameTimer para reiniciar a animação do novo estado.
+  setState(name, duration = 0) {
+    if (this.state === name && duration === 0) return;
+    // Reseta hitboxes e flag ao sair de um ataque
+    this.activeHitboxes = [];
+    this.hitRegistered  = false;
+    this.state      = name;
+    this.stateTimer = duration;
+    this.frame      = 0;
+    this.frameTimer = 0;
+    this.locked     = duration > 0;
+  }
+
+  // ── Sprite atual com fallback ──────────────────────────────────────
+  // Tenta obter o sprite exato para o estado atual.
+  // Se não existir, percorre a cadeia FB[] até encontrar um disponível.
+  // Isso permite o jogo funcionar mesmo sem todos os sprites gerados.
+  _getCurrentSprite() {
+    // Fallback em cadeia: tenta sprite dedicado → fallback1 → fallback2 → idle
+    // Ordem: sprite do nome exato → sprite legado (nomes antigos) → punch/kick → idle
+    const FB = {
+      // Terra leves
+      neutral_light:     ['punch', 'ground_light'],
+      side_light:        ['punch', 'ground_light'],
+      down_light:        ['kick',  'down_attack'],
+      // Terra pesados (Sigs)
+      neutral_heavy:     ['kick',  'ground_heavy'],
+      neutral_heavy_load:['neutral_heavy', 'kick'],
+      neutral_heavy_load: ['neutral_heavy', 'kick'], // charge da esfera
+      neutral_heav_load:  ['neutral_heavy', 'kick'], // alias legado
+      side_heavy:        ['kick',  'ground_heavy'],
+      down_heavy:        ['kick',  'down_attack'],
+      down_heavy_load:   ['down_heavy', 'kick'],  // pose de carregamento
+      // Ar leves
+      air_neutral_light: ['punch', 'air_light'],
+      air_side_light:    ['punch', 'air_light'],
+      air_down_light:    ['kick',  'down_air'],
+      // Ar pesados
+      recovery:          ['punch', 'anti_air'],
+      ground_pound:      ['kick',  'down_air'],
+      // Estados
+      hitstun:           ['hitstun'],
+      knockdown:         ['hitstun'],
+      crouch:            ['idle'],
+      dodge:             ['idle'],
+    };
+    const tryGet = (k) => {
+      const e = this.sprites[k]; if (!e) return null;
+      if (Array.isArray(e)) {
+        // Array de frames de animação
+        const img = e[this.frame % e.length];
+        if (img?.complete && img.naturalWidth > 0) return img;
+        const i0 = e[0]; return (i0?.complete && i0.naturalWidth > 0) ? i0 : null;
+      }
+      return (e.complete && e.naturalWidth > 0) ? e : null;
+    };
+    // Tenta: sprite exato → cadeia de fallbacks → stance → idle
+    const result = tryGet(this.state);
+    if (result) return result;
+    const fallbacks = FB[this.state];
+    if (fallbacks) {
+      for (const fb of fallbacks) {
+        const r = tryGet(fb); if (r) return r;
+      }
+    }
+    return tryGet('stance') || tryGet('idle') || null;
+  }
+
+  // ── Update ────────────────────────────────────────────────────────
+  // Chamado 1x por frame (ou step) pelo game loop.
+  // Ordem: hitstop → animação → timers → combate → input → física → bounds
+  update(opponent) {
+    // ── Hitstop (freeze frames no impacto) ───────────────────────
+    // Congela AMBOS os personagens por alguns frames ao acertar um golpe.
+    // Cria a sensação de impacto "pesado" — técnica clássica de fighting games.
+    if (this.hitstop > 0) { this.hitstop--; return; }
+
+    // ── Animação ──────────────────────────────────────────────────
+    this.frameTimer++;
+    const fps = ANIM_FPS[this.state] || 8;
+    if (this.frameTimer >= 60 / fps) { this.frame++; this.frameTimer = 0; }
+
+    if (this.invincible > 0) this.invincible--;
+    if (this.dodgeInvul)     this.invincible = Math.max(this.invincible, 1);
+
+    // ── Atualiza hitboxes ativas por frame ────────────────────────
+    // Consulta o moveset para saber quais círculos estão ativos neste frame.
+    // Se o frame não estiver no moveset, nenhuma hitbox ativa.
+    this._updateActiveHitboxes();
+    if (this.hitFlash   > 0) this.hitFlash--;
+    if (this.dashTimer    > 0) this.dashTimer--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+
+    // ── Dodge timer ───────────────────────────────────────────────
+    // Processa o dodge frame a frame:
+    //   dodging → move o personagem na direção do dodge
+    //   cooldown → aguarda antes de permitir novo dodge
+    // Cooldowns Brawlhalla: chão=60f, ar=163f
+    if (this.dodgeTimer > 0) {
+      this.dodgeTimer--;
+      // Move durante o dodge
+      if (!this.spotDodge) {
+        this.x += this.dodgeVx;
+        if (!this.onGround) {
+          this.y  += this.dodgeVy;
+          this.vy  = this.dodgeVy * 0.3; // amortece velocidade vertical
+        }
+      }
+      if (this.dodgeTimer <= 0) {
+        this.dodgeInvul  = false;
+        this.dodgeState  = 'cooldown';
+        // Cooldown: chão=60f, ar=163f
+        this.dodgeCooldown = this.onGround ? 60 : 163;
+        this.gcWindow = 0;
+      }
+    }
+    if (this.dodgeCooldown > 0) {
+      this.dodgeCooldown--;
+      // Tocar o chão dentro de 75f do air dodge → remove cooldown restante
+      if (this.onGround && this.dodgeState === 'cooldown') {
+        if (this.dodgeCooldown > 163 - 75) this.dodgeCooldown = 75;
+        else { this.dodgeState = 'ready'; this.dodgeCooldown = 0; }
+      }
+      if (this.dodgeCooldown <= 0) this.dodgeState = 'ready';
+    }
+
+    // Gravity Cancel window (18f após spot dodge aéreo)
+    // Durante esse tempo, pressionar J ou K executa um ground attack no ar
+    if (this.gcWindow > 0) this.gcWindow--;
+
+    // ── Dash em andamento ─────────────────────────────────────────
+    if (this.isDashing) {
+      this.dashFrames--;
+      if (this.dashFrames <= 0) { this.isDashing = false; this.vx = 0; }
+    }
+
+    // ── Combo timer ───────────────────────────────────────────────
+    if (this.comboTimer > 0) {
+      this.comboTimer--;
+      if (this.comboTimer <= 0) this.comboCount = 0;
+    }
+
+    // ── Cancel window ────────────────────────────────────────────
+    if (this.cancelWindow > 0) {
+      this.cancelWindow--;
+      // Executa input buffered se existir
+      if (this.inputBuffer && this.cancelWindow > 0) {
+        const fn = this.inputBuffer;
+        this.inputBuffer = null;
+        fn();
+        return;
+      }
+      if (this.cancelWindow <= 0) this.inputBuffer = null;
+    }
+
+    // ── Hitstun ───────────────────────────────────────────────────
+    // Enquanto em hitstun, o personagem não pode agir.
+    // Se ainda estiver se movendo rápido (knockback), decai mais lento
+    // (simula o hitstun estendido por velocidade do Brawlhalla).
+    if (this.hitstun > 0) {
+      // Estendido por velocidade (knock em movimento = hitstun maior)
+      if (Math.abs(this.vx) > 2) this.hitstun = Math.max(this.hitstun - 0.5, 0);
+      else                        this.hitstun--;
+      if (this.hitstun <= 0 && this.state === 'hitstun') {
+        if (this.knockdown) {
+          this.setState('knockdown', 40);
+        } else {
+          this.setState(this.onGround ? 'idle' : 'jump');
+          this.locked   = false;
+          this.isAirborne = false;
+        }
+      }
+    }
+
+    // ── Knockdown recovery ────────────────────────────────────────
+    // Estado knockdown: após ground_pound o personagem fica
+    // prostrado por 40 frames antes de poder agir novamente.
+    if (this.state === 'knockdown') {
+      this.stateTimer--;
+      if (this.stateTimer <= 0) {
+        this.setState('idle'); this.locked = false;
+        this.knockdown = false; this.juggleCount = 0;
+        this.isAirborne = false;
+      }
+    }
+
+    // ── Decai velocidade horizontal ───────────────────────────────
+    // Simula atrito/arrasto: knockback diminui 20% por frame.
+    // O personagem aplica vx na posição mesmo em hitstun/knockdown.
+    this.vx *= 0.80;
+    if (!this.locked || this.state === 'hitstun' || this.state === 'knockdown')
+      this.x += this.vx;
+
+    // ── Estado de ataque bloqueado ────────────────────────────────
+    if (this.locked && this.state !== 'hitstun' && this.state !== 'knockdown') {
+      this.stateTimer--;
+      if (this.stateTimer <= 0) {
+        this.locked = false;
+        this.cancelWindow = 0;
+        this.inputBuffer  = null;
+        this.setState(this.onGround ? 'idle' : 'jump');
+        this.attackPriority = 0;
+      }
+    }
+
+    // ── Input (só humano, não em hitstun/knockdown) ───────────────
+    if (this.isPlayer && this.hitstun <= 0 && this.state !== 'knockdown')
+      this._handleInput(opponent);
+
+    // ── Física vertical ───────────────────────────────────────────
+    // Gravidade aplicada a cada frame quando no ar.
+    // Fast fall: segurar ↓ com vy > 0 aumenta gravidade em 1.8x.
+    // Ao tocar o chão: restaura todos os pulos/recoveries.
+    if (!this.onGround) {
+      // Fast fall: gravidade aumentada ao segurar ↓ (só após delay pós-pulo)
+      const gravMult = this.isFastFalling ? this.fastFallSpeed : 1.0;
+      this.vy += this.gravity * gravMult;
+      this.y  += this.vy;
+
+      if (this.y >= this.groundY) {
+        this.y = this.groundY; this.vy = 0; this.onGround = true;
+        this.isFastFalling = false;
+        this.isAirborne    = false;
+        this.juggleCount   = 0;
+        // Restaura pulos ao tocar o chão
+        this.jumpsLeft      = 3;
+        this.recoveriesLeft = 1;
+        this.totalAirActions = 0;
+        this.walkedOffEdge  = false;
+        this.chaseDodgesLeft = 0;
+        if (!this.locked && this.state !== 'hitstun' && this.state !== 'knockdown')
+          this.setState('idle');
+      }
+    } else {
+      // No chão: fast fall se segura ↓ (andar da borda)
+      this.isFastFalling = false;
+    }
+
+    if (opponent && !this.locked) this.facing = opponent.x > this.x ? 1 : -1;
+    this.x = Math.max(50, Math.min(900 - 50, this.x));
+  }
+
+  // ── Input — Brawlhalla Movement System ──────────────────────────
+  // Processa todos os inputs do jogador humano.
+  // Ordem de prioridade (maior → menor):
+  //   Dodge > Pulo > Dash > Movimento > Recovery > Ataques > Idle
+  _handleInput(opponent) {
+    const down   = Input.isHeld('arrowdown')  || Input.isHeld('s');
+    // 'up' para DIRECIONAMENTO de ataque: só conta se segurar sem ser press novo
+    const pressUp = Input.wasPressed('arrowup') || Input.wasPressed('w');
+    const up      = (Input.isHeld('arrowup') || Input.isHeld('w')) && !pressUp;
+    const left   = Input.isHeld('arrowleft')  || Input.isHeld('a');
+    const right  = Input.isHeld('arrowright') || Input.isHeld('d');
+    const side   = left || right;
+    const pressJ = Input.wasPressed('j');
+    const pressK = Input.wasPressed('k');
+    const holdK  = Input.isHeld('k');
+    const relK   = Input.wasReleased('k');
+    const pressL = Input.wasPressed('l');
+    const holdL  = Input.isHeld('l');
+
+    // Não processa movimento durante dodge (exceto fast fall)
+    const inDodge = this.dodgeTimer > 0;
+
+    // ─────────────────────────────────────────────────────────────
+    // DODGE (tecla L)
+    // Brawlhalla: dodge direcional (8 direções) ou spot dodge (sem direção)
+    // Duração: direcional=12f, spot aéreo=20f, spot terrestre=16f
+    // Cooldown: chão=60f, ar=163f
+    // Gravity Cancel: atacar em 18f após spot dodge aéreo = ground attack no ar
+    // Após ataque: Chase Dodge (mais rápido, pode cancelar em ataque)
+    // ─────────────────────────────────────────────────────────────
+    if (pressL && this.dodgeState === 'ready' && this.hitstun <= 0 && !this.locked) {
+      this._doDodge(up, down, left, right, side);
+      return;
+    }
+
+    if (inDodge) {
+      // Gravity Cancel: atacar dentro de 18f de spot dodge aéreo
+      if (this.gcWindow > 0 && !this.onGround) {
+        if (pressJ || pressK) {
+          this._cancelDodgeWithAttack(pressJ, pressK, side, down, up, opponent);
+          return;
+        }
+      }
+      return; // nenhum outro input durante dodge
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // JUMP — Brawlhalla: máx 4 ações aéreas (jumps+recoveries)
+    // Combinações possíveis: 3J+1R, 2J+2R, 1J+3R
+    // Andar da borda sem pular (walkedOffEdge) → só 3 ações totais
+    // Dash jump: pular logo após dash herda o vx do dash
+    // ─────────────────────────────────────────────────────────────
+    if (pressUp && !this.locked) {
+      if (this.onGround) {
+        // Pulo do chão
+        const jumpVx = this.isDashing ? (this.vx * 0.8) : 0; // dash jump
+        this.vx = jumpVx;
+        this.vy = this.jumpForce;
+        this.onGround = false;
+        this.jumpsLeft--;
+        this.totalAirActions++;
+        this.isFastFalling = false;
+        this.setState('jump', 20);
+      } else {
+        // Pulo aéreo — usa um dos pulos restantes
+        const maxActions = this.walkedOffEdge ? 3 : 4;
+        if (this.jumpsLeft > 0 && this.totalAirActions < maxActions) {
+          this.vy = this.jumpForce * 0.9; // pulo aéreo ligeiramente menor
+          this.jumpsLeft--;
+          this.totalAirActions++;
+          this.isFastFalling = false;
+          this.setState('jump', 16);
+        }
+      }
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // DASH (double-tap lateral)
+    // Pressionar a mesma direção 2x dentro de 16 frames → dash.
+    // Dash aplica vx=10 por 12 frames, depois decai normalmente.
+    // ─────────────────────────────────────────────────────────────
+    if (!this.locked && !this.isDashing && this.dashCooldown <= 0 && this.onGround) {
+      const pressLeft  = Input.wasPressed('arrowleft')  || Input.wasPressed('a');
+      const pressRight = Input.wasPressed('arrowright') || Input.wasPressed('d');
+      if (pressLeft) {
+        if (this.dashLastDir === 'left' && this.dashTimer > 0) {
+          this._startDash(-1);
+        } else { this.dashLastDir = 'left'; this.dashTimer = 16; }
+      }
+      if (pressRight) {
+        if (this.dashLastDir === 'right' && this.dashTimer > 0) {
+          this._startDash(1);
+        } else { this.dashLastDir = 'right'; this.dashTimer = 16; }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // MOVIMENTO LATERAL (sempre disponível fora do dodge)
+    // ─────────────────────────────────────────────────────────────
+    if (!this.locked) {
+      const moveSpeed = this.isDashing ? this.speed * 2.5 : this.speed;
+      if (left)  this.x -= moveSpeed;
+      if (right) this.x += moveSpeed;
+    }
+
+
+
+    // ─────────────────────────────────────────────────────────────
+    // FAST FALL — segurar ↓ no ar
+    // Só ativa quando vy > 0 (caindo). Aumenta gravidade × 1.8.
+    // Torna o personagem mais imprevisível e permite hits mais precisos.
+    // ─────────────────────────────────────────────────────────────
+    if (!this.onGround && down && this.vy > 0 && !this.locked) {
+      this.isFastFalling = true;
+    }
+    if (!down) this.isFastFalling = false;
+
+    // ─────────────────────────────────────────────────────────────
+    // HEAVY CHARGE
+    // Ao segurar K mostra sprite de carregamento por direção:
+    //   neutro/cima → neutral_heavy_load (esfera)
+    //   baixo       → down_heavy (agachada carregando)
+    //   lateral     → side_heavy (pose do raio)
+    // ─────────────────────────────────────────────────────────────
+    if (holdK && this.hitstun <= 0) {
+      // Acumula frames de charge independente de estar locked
+      if (!this.locked) this.heavyHeld++;
+      if (this.heavyHeld >= 18) this.heavyCharged = true;
+      // Mostra down_heavy_load ao segurar ↓+K no chão (não locked)
+      if (!this.locked && this.onGround && down && this.heavyHeld >= 3) {
+        if (this.state !== 'down_heavy_load') this.setState('down_heavy_load', 0);
+      }
+    }
+    // Nota: relK e !holdK ocorrem no mesmo frame.
+    // O reset de heavyHeld só acontece se relK NÃO disparar ataque
+    // (relK é processado abaixo e zera heavyCharged/heavyHeld ele mesmo)
+    if (!holdK && !relK && this.heavyHeld > 0) {
+      if (this.state === 'down_heavy_load') this.setState('idle');
+      this.heavyHeld    = 0;
+      this.heavyCharged = false;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ESPECIAL (↓+J no chão)
+    // ─────────────────────────────────────────────────────────────
+    const inCancel = this.locked && this.cancelWindow > 0;
+
+    // ─────────────────────────────────────────────────────────────
+    // RECOVERY (K no ar)
+    // Usa um dos recoveriesLeft. Conta como ação aérea.
+    // Neutro (K): dá impulso vertical + ataque recovery
+    // Baixo (↓+K): ground_pound — bate no chão com launcher
+    // ─────────────────────────────────────────────────────────────
+    if (!this.onGround && (!this.locked || inCancel) && relK) {
+      const maxActions = this.walkedOffEdge ? 3 : 4;
+      const charged    = this.heavyCharged;
+
+      // Recovery conta como ação aérea
+      if (this.recoveriesLeft > 0 && this.totalAirActions < maxActions) {
+        const isExhausted = this.recoveriesLeft < 1; // depois do 1º
+        // Recovery exausto: menos altura, mais dano
+        const fn = () => {
+          if (down) {
+            this._doAttack('ground_pound', 32, charged?26:20, 115, opponent, PRIORITY.AERIAL, true, charged);
+          } else {
+            // Recovery move: dá um pequeno impulso para cima
+            if (!down) { this.vy = Math.min(this.vy, -6); }
+            this._doAttack('recovery', 30, charged?22:16, 105, opponent, PRIORITY.AERIAL, false, charged);
+          }
+          if (charged) { this.heavyCharged = false; this.heavyHeld = 0; }
+        };
+        this.recoveriesLeft--;
+        this.totalAirActions++;
+        if (inCancel) { this.inputBuffer = fn; return; }
+        fn(); return;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ATAQUES NO AR
+    // ─────────────────────────────────────────────────────────────
+    if (!this.onGround && (!this.locked || inCancel)) {
+      if (pressJ) {
+        const fn = () => {
+          if (down)      this._doAttack('air_down_light',   22, 10, 110, opponent, PRIORITY.LIGHT);
+          else if (side) this._doAttack('air_side_light',   20,  9,  95, opponent, PRIORITY.LIGHT);
+          else           this._doAttack('air_neutral_light',20,  9,  95, opponent, PRIORITY.LIGHT);
+        };
+        if (inCancel) { this.inputBuffer = fn; return; }
+        fn(); return;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ATAQUES NO CHÃO
+    // ─────────────────────────────────────────────────────────────
+    if (this.onGround && (!this.locked || inCancel)) {
+      if (pressJ) {
+        const fn = () => {
+          if (up || (!down && !side))
+                         this._doAttack('neutral_light',18,10, 90,opponent,PRIORITY.LIGHT);
+          else if (side) this._doAttack('side_light',   20,11, 95,opponent,PRIORITY.LIGHT);
+          else           this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
+        };
+        if (inCancel) { this.inputBuffer = fn; return; }
+        fn(); return;
+      }
+      // Heavy SEMPRE dispara ao soltar K (relK)
+      // Charged = segurou 18+ frames antes de soltar
+      if (relK) {
+        const charged = this.heavyCharged;
+        const fn = () => {
+          // Range amplo só para Fezo (charId=2) — Henrique tem range normal
+          const isFezo = this.charId === 2;
+          const shRange = isFezo ? 240 : 115;
+          const dhRange = isFezo ? 280 : 115;
+          if (side)      this._doAttack('side_heavy',    charged?36:32, charged?24:20, shRange, opponent, PRIORITY.HEAVY, false, charged);
+          else if (down) this._doAttack('down_heavy',    charged?38:34, charged?26:22, dhRange, opponent, PRIORITY.HEAVY, false, charged);
+          else           this._doAttack('neutral_heavy', charged?34:30, charged?22:18, 110,     opponent, PRIORITY.HEAVY, false, charged);
+          this.heavyCharged = false; this.heavyHeld = 0;
+          if (this.state === 'down_heavy_load') {} // estado já mudado pelo _doAttack
+        };
+        if (inCancel) { this.inputBuffer = fn; return; }
+        fn(); return;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // IDLE / WALK / CROUCH
+    // ─────────────────────────────────────────────────────────────
+    if (!this.locked && this.onGround) {
+      if (down)      { if (this.state !== 'crouch') this.setState('crouch'); }
+      else if (side) this.setState(this.sprites['walk'] ? 'walk' : 'stance');
+      else           this.setState('idle');
+    }
+  }
+
+  // ── Inicia Dodge ──────────────────────────────────────────────────
+  _doDodge(up, down, left, right, side) {
+    const isAir = !this.onGround;
+
+    // Duração por tipo (Brawlhalla exato)
+    // Direcional aéreo=12f, Spot aéreo=20f, Spot terrestre=16f
+    let dur, invulDur, dvx, dvy;
+    const DODGE_SPEED = 6;
+
+    if (!left && !right && !up && !down) {
+      // Spot dodge
+      dur      = isAir ? 20 : 16;
+      invulDur = dur;
+      dvx = 0; dvy = 0;
+      this.spotDodge = true;
+      // Gravity Cancel disponível por 18f após spot dodge aéreo
+      if (isAir) this.gcWindow = 18;
+    } else {
+      // Dodge direcional
+      dur      = 12;
+      invulDur = 12;
+      this.spotDodge = false;
+      dvx = left ? -DODGE_SPEED : right ? DODGE_SPEED : 0;
+      dvy = up   ? -DODGE_SPEED * 0.8 : down ? DODGE_SPEED * 0.6 : 0;
+      // Dodge diagonal para baixo no ar → desliza no chão
+      if (isAir && down) { dvx *= 0.8; }
+    }
+
+    this.dodgeState  = 'dodging';
+    this.dodgeTimer  = dur + 2; // +2 frames de startup
+    this.dodgeInvul  = true;
+    this.invincible  = invulDur;
+    this.dodgeVx     = dvx;
+    this.dodgeVy     = dvy;
+    this.setState('dodge', dur + 2);
+  }
+
+  // ── Gravity Cancel — ataca dentro de 18f de spot dodge aéreo ─────
+  _cancelDodgeWithAttack(pressJ, pressK, side, down, up, opponent) {
+    // Executa ground attack no ar (GC)
+    this.dodgeTimer = 0;
+    this.dodgeInvul = false;
+    this.gcWindow   = 0;
+    this.locked     = false;
+
+    if (pressJ) {
+      if (up || (!down && !side)) this._doAttack('neutral_light',18,10,90,opponent,PRIORITY.LIGHT);
+      else if (side)              this._doAttack('side_light',   20,11,95,opponent,PRIORITY.LIGHT);
+      else                        this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
+    } else if (pressK) {
+      if (side)      this._doAttack('side_heavy',   32,20,240,opponent,PRIORITY.HEAVY); // range amplo: raio
+      else if (down) this._doAttack('down_heavy',   34,22,280,opponent,PRIORITY.HEAVY,false); // range amplo: raios elétricos
+      else           this._doAttack('neutral_heavy',30,18,110,opponent,PRIORITY.HEAVY);
+    }
+  }
+
+  // ── Inicia Dash ───────────────────────────────────────────────────
+  _startDash(dir) {
+    this.isDashing    = true;
+    this.dashFrames   = 12;
+    this.vx           = dir * 10;
+    this.dashTimer    = 0;
+    this.dashLastDir  = '';
+    this.dashCooldown = 22;
+    // Chase Dodge disponível após ataque: 2 se no chão
+    this.chaseDodgesLeft = 2;
+  }
+  // ── Executa ataque ────────────────────────────────────────────────
+  // Centraliza toda a lógica de um ataque:
+  //   1. Seta estado do atacante (animação + lock)
+  //   2. Verifica clash (mesma prioridade) ou prioridade
+  //   3. Calcula dano com charge multiplier
+  //   4. Calcula knockback via força variável (dmgAccum do alvo)
+  //   5. Aplica juggle scaling (anti-infinite)
+  //   6. Aplica hitstop em ambos
+  //   7. Incrementa combo counter
+  _doAttack(stateName, lockFrames, baseDmg, range, opponent,
+            priority = PRIORITY.LIGHT, launcher = false, charged = false) {
+
+    const cw = CANCEL_WINDOW[stateName] || 0;
+    this.setState(stateName, lockFrames);
+    this.attackPriority = priority;
+    this.cancelWindow   = cw;
+    this.lastAttack     = stateName;
+    this.inputBuffer    = null;
+
+    if (!opponent || !this._inRange(opponent, range)) return;
+
+    // Clash check
+    if (opponent.locked && opponent.attackPriority === priority) {
+      this._doClash(opponent); return;
+    }
+    if (opponent.locked && opponent.attackPriority > priority) return;
+
+    // Aplica hit imediatamente (detecção por _inRange)
+    // Frame data em hitboxes.js é usado apenas para visualização debug
+    this._applyHit({ opponent, baseDmg, charged, launcher, stateName });
+  }
+
+  // ── Aplica o dano de um hit ───────────────────────────────────────
+  // Chamado pelo checkHitboxCollision() (frame data) ou direto (legado).
+  _applyHit({ opponent, baseDmg, charged, launcher, stateName }) {
+    if (this.hitRegistered) return; // só um hit por swing
+    this.hitRegistered = true;
+
+    const chargeMulti = charged ? 1.35 : 1.0;
+    const dmg = Math.round(baseDmg * chargeMulti);
+
+    const accum     = opponent.dmgAccum;
+    const fScale    = Math.max(0.5, accum/100 + accum*accum/20000);
+    const baseForce = ATTACK_BASE_FORCE[stateName] || 10;
+    let   knockback = Math.round(baseForce * fScale * chargeMulti);
+
+    let juggleScale = 1.0;
+    if (opponent.isAirborne || !opponent.onGround) {
+      opponent.juggleCount++;
+      juggleScale = Math.pow(0.80, opponent.juggleCount - 1);
+      knockback   = Math.round(knockback * juggleScale);
+    }
+
+    const baseHitstun = HITSTUN_MS[stateName] || 170;
+    const hitstunMs   = Math.round(baseHitstun * juggleScale);
+    const hitstunF    = Math.max(4, Math.round(hitstunMs / (1000/60)));
+    const reaction    = HIT_REACTION[stateName] || 'grounded';
+
+    const stopFrames  = HITSTOP_FRAMES[stateName] || 3;
+    this.hitstop      = stopFrames;
+    opponent.hitstop  = stopFrames;
+
+    this.comboCount++;
+    this.comboTimer = 90;
+    if (this.onCombo) this.onCombo(this.comboCount, stateName);
+
+    opponent.takeHit(dmg, this, hitstunF, knockback, launcher, reaction);
+  }
+
+  // ── Checa colisão hitbox vs hurtbox ──────────────────────────────
+  // Chamado pelo game loop a cada frame para ataques com frame data.
+  // Se colidir e ainda não registrou hit → aplica dano.
+  checkHitboxCollision(opponent) {
+    if (!this.locked || !this._pendingHit) return;
+    if (this.hitRegistered) return;
+    if (this.activeHitboxes.length === 0) return;
+    if (hitboxHitsTarget(this, opponent)) {
+      this._applyHit(this._pendingHit);
+      this._pendingHit = null;
+    }
+  }
+
+  // ── Clash ─────────────────────────────────────────────────────────
+  // Ocorre quando dois ataques de mesma prioridade se acertam no mesmo frame.
+  // Ambos os personagens são afastados sem receber dano.
+  _doClash(opponent) {
+    const dir = this.x < opponent.x ? -1 : 1;
+    this.vx = dir * 5; opponent.vx = -dir * 5;
+    this.setState('idle'); this.locked = false; this.attackPriority = 0;
+    this.cancelWindow = 0; this.inputBuffer = null;
+    opponent.setState('idle'); opponent.locked = false; opponent.attackPriority = 0;
+    opponent.cancelWindow = 0; opponent.inputBuffer = null;
+    if (this.onClash) this.onClash();
+  }
+
+  // ── Receber dano ──────────────────────────────────────────────────
+  // Aplica dano, hitstun, knockback e reação visual.
+  // Reações possíveis: grounded | knockback | airborne | knockdown
+  // knockback = força variável já calculada pelo _doAttack
+  takeHit(damage, attacker, hitstunFrames, knockback, launcher = false,
+          reaction = 'grounded') {
+    if (this.invincible > 0) return;
+
+    const actual = damage;
+
+    this.hp       = Math.max(0, this.hp - actual);
+    this.hitFlash = 12;
+
+    if (true) {
+      this.dmgAccum += actual;
+      this.cancelWindow = 0;
+      this.inputBuffer  = null;
+
+      // Determina reação ao hit
+      this.hitReaction = reaction;
+      this.hitstun     = hitstunFrames;
+      this.locked      = true;
+      this.setState('hitstun', hitstunFrames);
+
+      // Knockback horizontal
+      const dir = attacker.x < this.x ? 1 : -1;
+      this.vx   = dir * Math.min(knockback, 32);
+
+      // Reações específicas
+      switch (reaction) {
+        case 'airborne':
+        case 'launcher':
+          // Lança para cima — inicia juggle
+          this.vy        = -15;
+          this.onGround  = false;
+          this.isAirborne = true;
+          break;
+        case 'knockdown':
+          // Vai ao chão e fica derrubado
+          this.knockdown = true;
+          if (!this.onGround) { this.vy = -6; this.onGround = false; }
+          break;
+        case 'knockback':
+          // Recuo forte horizontal, pode derrubar se na borda
+          this.vx = dir * Math.min(knockback * 1.5, 40);
+          break;
+        // 'grounded': padrão — fica no chão em hitstun
+      }
+
+      if (launcher && reaction !== 'airborne') {
+        this.vy = -15; this.onGround = false; this.isAirborne = true;
+      }
+    }
+
+    this.invincible = 14;
+    if (this.onHit) this.onHit(actual, this.x, this.y - this.height * 0.6, reaction);
+  }
+
+  // ── Atualiza hitboxes ativas ─────────────────────────────────────
+  // Consultado a cada frame. Usa this.frame (contador de animação)
+  // para saber qual frame de jogo está ativo.
+  _updateActiveHitboxes() {
+    if (!this.moveset || !this.locked) {
+      this.activeHitboxes = []; return;
+    }
+    const move = this.moveset[this.state];
+    if (!move) { this.activeHitboxes = []; return; }
+    const fd = move.frames[this.frame];
+    this.activeHitboxes = fd ? fd.hitboxes : [];
+  }
+
+  _inRange(o, r) {
+    // Alcance horizontal
+    if (Math.abs(this.x - o.x) >= r) return false;
+    // Alcance vertical: atacante no chão só acerta alvo no ar
+    // se o alvo não estiver mais alto que ~80% da altura do personagem
+    if (this.onGround && !o.onGround) {
+      if ((this.y - o.y) > this.height * 0.8) return false;
+    }
+    return true;
+  }
+
+  // ── Reset (nova partida) ──────────────────────────────────────────
+  // Chamado ao iniciar uma nova luta (applySelection) ou revanche.
+  // Zera todos os estados de combate, física e movimento.
+  resetCombat() {
+    this.comboCount = 0; this.comboTimer = 0;
+    this.cancelWindow = 0; this.inputBuffer = null;
+    this.lastAttack = ''; this.juggleCount = 0;
+    this.hitReaction = 'grounded';
+    this.isAirborne = false; this.knockdown = false;
+    this.hitstop = 0; this.hitstun = 0;
+    this.heavyHeld = 0; this.heavyCharged = false;
+    this.dashTimer = 0; this.dashLastDir = ''; this.dashCooldown = 0;
+    this.isDashing = false; this.dashFrames = 0;
+    this.jumpsLeft = 3; this.recoveriesLeft = 1;
+    this.totalAirActions = 0; this.walkedOffEdge = false;
+    this.isFastFalling = false;
+    this.dodgeState = 'ready'; this.dodgeTimer = 0; this.dodgeCooldown = 0;
+    this.dodgeInvul = false; this.gcWindow = 0; this.chaseDodgesLeft = 0;
+    this.dmgAccum = 0; this.vx = 0; this.attackPriority = 0;
+    this.activeHitboxes = []; this._pendingHit = null; this.hitRegistered = false;
+  }
+
+  // ── Desenho ───────────────────────────────────────────────────────
+  draw(ctx) {
+    const w = this.width, h = this.height;
+    const drawX = this.x - w/2, drawY = this.y - h;
+
+    ctx.save();
+    if (this.hitFlash > 0 && this.hitFlash % 2 === 0) ctx.globalAlpha = 0.35;
+    if (this.facing === -1) {
+      ctx.translate(this.x, 0); ctx.scale(-1, 1); ctx.translate(-this.x, 0);
+    }
+    const sprite = this._getCurrentSprite();
+    if (sprite) ctx.drawImage(sprite, drawX, drawY, w, h);
+    else        this._drawPlaceholder(ctx, drawX, drawY, w, h);
+    ctx.restore();
+
+    // ── Sprite de efeito (_fx) ────────────────────────────────────
+    // Desenhado FORA do ctx.save() do flip para ser sempre na mesma direção
+    // (o efeito já aponta na direção certa na imagem)
+    this._drawFxSprite(ctx, w, h);
+
+    // Heavy charge bar
+    if (this.isPlayer && this.heavyHeld > 0 && !this.locked) {
+      const pct = Math.min(this.heavyHeld / 18, 1);
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#111';
+      ctx.fillRect(this.x - 24, this.y - h - 12, 48, 6);
+      ctx.fillStyle = pct >= 1 ? '#ffe000' : '#aaaaff';
+      ctx.fillRect(this.x - 24, this.y - h - 12, 48 * pct, 6);
+      ctx.restore();
+    }
+
+    if (this.hitstun > 0) this._drawStars(ctx);
+  }
+
+  // ── Sprite de efeito separada ────────────────────────────────────
+  // Desenhada por cima do personagem sem distorção.
+  // A imagem _fx é ancorada no ponto de emissão do ataque:
+  //   - side_heavy_fx: parte da mão do personagem, vai para a frente
+  //   - down_heavy_fx: parte dos pés, se expande horizontalmente
+  _drawFxSprite(ctx, w, h) {
+    const fxKey = this.state + '_fx';
+    const fxImg = this.sprites[fxKey];
+    if (!fxImg || !fxImg.complete || !fxImg.naturalWidth) return;
+
+    const iw = fxImg.naturalWidth;
+    const ih = fxImg.naturalHeight;
+
+    ctx.save();
+
+    // Flip conforme facing (o efeito deve seguir a direção do personagem)
+    if (this.facing === -1) {
+      ctx.translate(this.x, 0); ctx.scale(-1, 1); ctx.translate(-this.x, 0);
+    }
+
+    // Posicionamento por tipo de ataque
+    let fx, fy, fw, fh;
+
+    if (this.state === 'side_heavy') {
+      // Raio horizontal: escala para 260px max, na altura da mão
+      const scale = Math.min(260 / iw, 1.0);
+      fw = iw * scale; fh = ih * scale;
+      fx = this.x + w * 0.2;          // começa na mão da Fezo
+      fy = this.y - h * 0.6 - fh / 2; // meia altura do tronco
+
+    } else if (this.state === 'down_heavy') {
+      // Raio de chão: escala para 220px max, rente ao chão e na frente
+      const scale = Math.min(220 / iw, 1.0);
+      fw = iw * scale; fh = ih * scale;
+      fx = this.x + w * 0.1;      // levemente à frente
+      fy = this.y - fh;            // base da imagem = chão do personagem
+
+    } else {
+      const scale = Math.min(200 / iw, 1.0);
+      fw = iw * scale; fh = ih * scale;
+      fx = this.x + w * 0.1;
+      fy = this.y - h * 0.6 - fh / 2;
+    }
+
+    // Aplica hitFlash ao efeito também
+    if (this.hitFlash > 0 && this.hitFlash % 2 === 0) ctx.globalAlpha = 0.35;
+
+    ctx.drawImage(fxImg, fx, fy, fw, fh);
+    ctx.restore();
+  }
+
+  _drawStars(ctx) {
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const a = Date.now()/200 + i*(Math.PI*2/3);
+      ctx.fillStyle = '#ffe000'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('★', this.x + Math.cos(a)*18, this.y - this.height - 14 + Math.sin(a)*6);
+    }
+    ctx.restore();
+  }
+
+  _drawPlaceholder(ctx, x, y, w, h) {
+    const cx   = x + w / 2;
+    const isP1 = this.charId === 1;
+    const body = isP1 ? '#3a8c3f' : '#e8e8e8';
+    const skin = isP1 ? '#c68642' : '#8B5E3C';
+    const shoe = isP1 ? '#c8d400' : '#222';
+    const cap  = isP1 ? '#e67e00' : null;
+
+    // ── Desenha corpo base ────────────────────────────────────────
+    const _body = () => {
+      // Tronco
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.roundRect(cx-w*.22, y+h*.28, w*.44, h*.38, 6); ctx.fill();
+      // Cabeça
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.ellipse(cx, y+h*.15, w*.18, h*.15, 0, 0, Math.PI*2); ctx.fill();
+      // Boné / cabelo
+      if (cap) {
+        ctx.fillStyle = cap;
+        ctx.beginPath(); ctx.ellipse(cx, y+h*.08, w*.20, h*.07, 0, 0, Math.PI*2); ctx.fill();
+      }
+      // Pernas
+      ctx.fillStyle = '#333';
+      ctx.fillRect(cx-w*.20, y+h*.60, w*.18, h*.32);
+      ctx.fillRect(cx+w*.02, y+h*.60, w*.18, h*.32);
+      // Sapatos
+      ctx.fillStyle = shoe;
+      ctx.fillRect(cx-w*.24, y+h*.88, w*.22, h*.08);
+      ctx.fillRect(cx+w*.02, y+h*.88, w*.22, h*.08);
+    };
+
+    // ── Braços por estado ─────────────────────────────────────────
+    // Cada ataque tem pose única de braços
+    const _arms = () => {
+      ctx.fillStyle = skin;
+      const s = this.state;
+
+      if (s === 'neutral_light') {
+        // Jab direto: braço direito estendido à frente
+        ctx.fillRect(cx+w*.22, y+h*.30, w*.32, h*.09);
+        ctx.fillRect(cx-w*.28, y+h*.38, w*.12, h*.22); // braço esq abaixado
+
+      } else if (s === 'side_light') {
+        // Gancho lateral: braço alto diagonal
+        ctx.save();
+        ctx.translate(cx+w*.18, y+h*.28);
+        ctx.rotate(-0.4);
+        ctx.fillRect(0, 0, w*.34, h*.09);
+        ctx.restore();
+        ctx.fillRect(cx-w*.30, y+h*.40, w*.12, h*.18);
+
+      } else if (s === 'down_light') {
+        // Uppercut: braço sobe vertical
+        ctx.fillRect(cx+w*.16, y+h*.10, w*.10, h*.28); // braço sobe
+        ctx.fillRect(cx-w*.28, y+h*.44, w*.12, h*.14);
+
+      } else if (s === 'neutral_heavy') {
+        // Soco carregado: dois braços à frente
+        ctx.fillRect(cx+w*.22, y+h*.32, w*.30, h*.10);
+        ctx.fillRect(cx+w*.18, y+h*.42, w*.28, h*.10);
+
+      } else if (s === 'side_heavy') {
+        // Uppercut giratório: braço alto diagonal amplo
+        ctx.save();
+        ctx.translate(cx, y+h*.25);
+        ctx.rotate(-0.6);
+        ctx.fillRect(0, -h*.04, w*.40, h*.10);
+        ctx.restore();
+        ctx.fillRect(cx-w*.30, y+h*.50, w*.12, h*.10);
+
+      } else if (s === 'down_heavy') {
+        // Smash baixo: braços curvados para baixo
+        ctx.fillRect(cx+w*.20, y+h*.50, w*.24, h*.10);
+        ctx.fillRect(cx+w*.24, y+h*.58, w*.20, h*.10);
+        ctx.fillRect(cx-w*.28, y+h*.42, w*.12, h*.10);
+
+      } else if (s === 'air_neutral_light') {
+        // No ar, jab horizontal
+        ctx.fillRect(cx+w*.24, y+h*.28, w*.28, h*.09);
+        ctx.fillRect(cx-w*.26, y+h*.35, w*.10, h*.20);
+
+      } else if (s === 'air_side_light') {
+        // No ar, chute lateral (perna estendida)
+        ctx.fillRect(cx-w*.30, y+h*.30, w*.14, h*.22); // braços para trás
+        ctx.fillRect(cx+w*.18, y+h*.30, w*.14, h*.22);
+        // Perna estendida
+        ctx.fillStyle = '#333';
+        ctx.save();
+        ctx.translate(cx+w*.10, y+h*.62);
+        ctx.rotate(-0.3);
+        ctx.fillRect(0, 0, w*.36, h*.10);
+        ctx.restore();
+        ctx.fillStyle = skin;
+
+      } else if (s === 'air_down_light') {
+        // Stomp: perna apontando para baixo
+        ctx.fillRect(cx-w*.26, y+h*.28, w*.12, h*.24);
+        ctx.fillRect(cx+w*.16, y+h*.28, w*.12, h*.24);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(cx-w*.08, y+h*.58, w*.18, h*.36); // perna abaixada
+
+      } else if (s === 'recovery') {
+        // Recovery: ambos os braços para cima
+        ctx.fillRect(cx-w*.30, y+h*.08, w*.12, h*.24);
+        ctx.fillRect(cx+w*.20, y+h*.08, w*.12, h*.24);
+
+      } else if (s === 'ground_pound') {
+        // Ground pound: corpo curvado, braços para baixo
+        ctx.fillRect(cx-w*.28, y+h*.42, w*.12, h*.26);
+        ctx.fillRect(cx+w*.18, y+h*.42, w*.12, h*.26);
+
+      } else if (s === 'dodge') {
+        // Dodge: corpo levemente inclinado, braços no corpo
+        ctx.fillRect(cx-w*.24, y+h*.30, w*.10, h*.30);
+        ctx.fillRect(cx+w*.16, y+h*.30, w*.10, h*.30);
+
+      } else if (s === 'jump') {
+        // Pulo: braços levantados
+        ctx.fillRect(cx-w*.32, y+h*.22, w*.12, h*.18);
+        ctx.fillRect(cx+w*.22, y+h*.22, w*.12, h*.18);
+
+      } else if (s === 'crouch') {
+        // Agachado: braços à frente
+        ctx.fillRect(cx-w*.28, y+h*.48, w*.12, h*.16);
+        ctx.fillRect(cx+w*.18, y+h*.48, w*.12, h*.16);
+
+      } else if (s === 'hitstun' || s === 'knockdown') {
+        // Tomando dano: braços abertos
+        ctx.fillRect(cx-w*.38, y+h*.28, w*.14, h*.24);
+        ctx.fillRect(cx+w*.26, y+h*.28, w*.14, h*.24);
+
+      } else {
+        // idle / stance / walk
+        ctx.fillRect(cx-w*.34, y+h*.32, w*.14, h*.26);
+        ctx.fillRect(cx+w*.22, y+h*.32, w*.14, h*.26);
+      }
+    };
+
+    _body();
+    _arms();
+
+    // Sombra no chão quando no ar
+    if (!this.onGround) {
+      ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(cx, this.groundY + 6, w * .32, 7, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.restore();
+    }
+  }
+}
+
+// ── Prioridade de ataque (maior = vence clash) ────────────────────
+// Quando dois ataques se acertam simultaneamente, o de maior prioridade
+// causa dano. Mesma prioridade → Clash (ambos afastados).
+const PRIORITY = { AERIAL: 1, LIGHT: 2, HEAVY: 3 };
+
+// ── Hit Reactions por ataque ─────────────────────────────────────
+// Define o tipo de reação que o alvo terá ao ser atingido.
+// grounded  = fica no chão em hitstun (leve)
+// knockback = recuo forte horizontal
+// airborne  = lançado para cima (juggle)
+// knockdown = derrubado ao chão
+const HIT_REACTION = {
+  neutral_light:     'grounded',
+  side_light:        'grounded',
+  down_light:        'airborne',    // launcher — lança para cima
+  neutral_heavy:     'knockback',   // Sig — recua
+  side_heavy:        'knockback',   // Sig — recua
+  down_heavy:        'knockback',   // Sig — recuo forte
+  air_neutral_light: 'grounded',
+  air_side_light:    'knockback',
+  air_down_light:    'grounded',
+  recovery:          'grounded',
+  ground_pound:      'knockdown',   // bate no chão — derruba
+};
+
+// ── Cancel Windows (frames após ataque para cancelar em outro) ────
+// Durante a cancel window, um novo input é aceito e bufferizado.
+// O próximo ataque executa automaticamente ao terminar a janela.
+// Leves: janela grande = fácil de encadear combos
+// Pesados: janela menor = mais difícil, mais recompensador
+const CANCEL_WINDOW = {
+  neutral_light:     14,   // leve neutro → pode encadear facilmente
+  side_light:        12,   // leve lateral
+  down_light:        10,   // leve baixo
+  neutral_heavy:      6,   // sig — janela pequena
+  side_heavy:         5,
+  down_heavy:         4,
+  air_neutral_light: 12,
+  air_side_light:    10,
+  air_down_light:     8,
+  recovery:           6,
+  ground_pound:       4,
+};
+
+// ── Hitstop (freeze frames no impacto) ────────────────────────────
+// Ambos os personagens ficam congelados por N frames ao acertar.
+// Técnica universal em fighting games para dar "peso" aos golpes.
+// Mais hitstop = golpe parece mais pesado
+const HITSTOP_FRAMES = {
+  neutral_light:      2,
+  side_light:         2,
+  down_light:         3,
+  neutral_heavy:      6,
+  side_heavy:         6,
+  down_heavy:         7,
+  air_neutral_light:  2,
+  air_side_light:     2,
+  air_down_light:     3,
+  recovery:           5,
+  ground_pound:       7,
+};
+
+// ── Hitstun por ataque (ms) ───────────────────────────────────────
+// Tempo que o alvo fica em hitstun após ser atingido.
+// Leves: menos hitstun = janela menor para combo follow-up
+// Pesados/Sigs: mais hitstun = mais tempo para combo
+const HITSTUN_MS = {
+  neutral_light:     170,
+  side_light:        180,
+  down_light:        190,
+  neutral_heavy:     260,
+  side_heavy:        300,  // raio — hitstun longo
+  down_heavy:        300,
+  air_neutral_light: 165,
+  air_side_light:    175,
+  air_down_light:    185,
+  recovery:          240,
+  ground_pound:      280,
+};
+
+// ── Força base (escala com dmgAccum via fórmula Brawlhalla) ───────
+// Knockback final = baseForce × (dmgAccum/100 + dmgAccum²/20000)
+// Quanto mais dano acumulado o alvo tem, mais longe ele voa.
+const ATTACK_BASE_FORCE = {
+  neutral_light:      7,
+  side_light:         8,
+  down_light:         6,
+  neutral_heavy:     18,  // esfera de energia
+  side_heavy:        24,  // raio longo — dano alto
+  down_heavy:        20,  // raios elétricos — multi-hit via range
+  air_neutral_light:  6,
+  air_side_light:     8,
+  air_down_light:     5,
+  recovery:          13,
+  ground_pound:      11,
+};
+
+// ── FPS de animação ───────────────────────────────────────────────
+const ANIM_FPS = {
+  idle: 6, walk: 4, stance: 8, crouch: 6,
+  jump: 10, hitstun: 12, knockdown: 8, dodge: 12,
+  neutral_light: 20, side_light: 20, down_light: 18,
+  neutral_heavy: 12, neutral_heav_load: 8, neutral_heavy_load: 8, side_heavy: 12, down_heavy: 12, down_heavy_load: 8,
+  air_neutral_light: 20, air_side_light: 20, air_down_light: 18,
+  recovery: 14, ground_pound: 14
+};
