@@ -150,6 +150,55 @@ function drawFlash() {
   flashAlpha = Math.max(0, flashAlpha - 0.04);
 }
 
+// ── Screen Shake ────────────────────────────────────────────────
+// Tremor da câmera em impactos fortes. magnitude decai 12%/frame.
+// triggerShake(mag, dur): só substitui se for igual/mais forte.
+let shakeMag = 0, shakeTime = 0;
+function triggerShake(mag, dur = 10) {
+  if (mag >= shakeMag || shakeTime <= 0) { shakeMag = mag; shakeTime = dur; }
+}
+function updateShake() {
+  if (shakeTime <= 0) return;
+  shakeTime--;
+  shakeMag = shakeTime <= 0 ? 0 : shakeMag * 0.88;
+}
+
+// ── Partículas de poeira ────────────────────────────────────────
+// Poeira ao pular/pousar/dar dash — feedback de movimento no chão.
+const particles = [];
+function spawnDust(x, y, count = 6, power = 1) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: x + (Math.random() - 0.5) * 20,
+      y: y - Math.random() * 6,
+      vx: (Math.random() - 0.5) * 3.2 * power,
+      vy: -(Math.random() * 1.6 * power + 0.3),
+      life: 18 + Math.random() * 14,
+      maxLife: 32,
+      r: 2.5 + Math.random() * 3.5,
+    });
+  }
+  if (particles.length > 220) particles.splice(0, particles.length - 220);
+}
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.04; p.vx *= 0.94; p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+function drawParticles() {
+  if (particles.length === 0) return;
+  ctx.save();
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife) * 0.5;
+    ctx.fillStyle = '#cfc9b8';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 // ── Players ─────────────────────────────────────────────────────
 // Instâncias dos dois personagens. player = humano, cpu = IA.
 // isPlayer:true habilita o _handleInput(). isPlayer:false = só física.
@@ -189,14 +238,36 @@ player.onCombo = (count, atk) => {
 player.onHit = (dmg, x, y) => {
   spawnHitText(['HIT!','OOF!','CRACK!','UGH!'][Math.floor(Math.random()*4)], x, y);
   triggerFlash(); updateHUD();
+  triggerShake(Math.min(3 + dmg * 0.45, 13));
 };
 cpu.onHit = (dmg, x, y) => {
   spawnHitText(['POW!','WHAM!','SMASH!','ZAP!','BANG!'][Math.floor(Math.random()*5)], x, y);
   triggerFlash(); updateHUD();
+  triggerShake(Math.min(3 + dmg * 0.45, 13));
 };
 
+// ── Feedback de movimento (poeira) ───────────────────────────────
+// Conecta os callbacks de movimento do player.js ao sistema de
+// partículas. impactVy alto = pouso forte = mais poeira.
+const _dustLand = (p) => (vy) => {
+  const strong = vy > 9;
+  spawnDust(p.x, GROUND_Y, strong ? 12 : 6, strong ? 1.5 : 1);
+};
+player.onLand = _dustLand(player);
+cpu.onLand    = _dustLand(cpu);
+
+const _dustJump = (p) => () => spawnDust(p.x, GROUND_Y, 4, 0.8);
+player.onJump = _dustJump(player);
+cpu.onJump    = _dustJump(cpu);
+
+const _dustDash = (p) => () => {
+  if (p.onGround) spawnDust(p.x - p.facing * 30, GROUND_Y, 7, 1.2);
+};
+player.onStartDash = _dustDash(player);
+cpu.onStartDash    = _dustDash(cpu);
+
 // ── Load sprites iniciais ────────────────────────────────────────
-// Carrega as sprites dos personagens padrão (metz e mila).
+// Carrega as sprites dos personagens padrão (metz e fezo).
 // Ao selecionar personagens na charselect, makeSprites() recarrega.
 player.loadSprites({
   idle: 'sprites/metz/idle.png', stance: 'sprites/metz/stance.png',
@@ -206,9 +277,13 @@ player.loadSprites({
   neutral_light:     'sprites/metz/neutral_light.png',
   side_light:        'sprites/metz/side_light.png',
   down_light:        'sprites/metz/down_light.png',
+  // Corpo a corpo (sem magia)
   neutral_heavy:     'sprites/metz/neutral_heavy.png',
   side_heavy:        'sprites/metz/side_heavy.png',
+  // ÚNICA magia — 3 fases (fallback p/ kick/hitstun enquanto PNG não existir)
+  down_heavy_load:   'sprites/metz/down_heavy_load.png',
   down_heavy:        'sprites/metz/down_heavy.png',
+  down_heavy_fx:     'sprites/metz/down_heavy_fx.png',
   air_neutral_light: 'sprites/metz/air_neutral_light.png',
   air_side_light:    'sprites/metz/air_side_light.png',
   air_down_light:    'sprites/metz/air_down_light.png',
@@ -221,34 +296,34 @@ player.loadSprites({
 });
 
 cpu.loadSprites({
-  idle:    'sprites/mila/idle.png',
-  stance:  'sprites/mila/stance.png',
-  punch:   'sprites/mila/punch.png',
-  kick:    'sprites/mila/kick.png',
-  jump:    'sprites/mila/jump.png',
-  hitstun: 'sprites/mila/hitstun.png',
-  // 11 ataques com sprites dedicadas
-  neutral_light:     'sprites/mila/neutral_light.png',
-  side_light:        'sprites/mila/side_light.png',
-  down_light:        'sprites/mila/down_light.png',
-  neutral_heavy:     'sprites/mila/neutral_heavy.png',
-  neutral_heavy_load: 'sprites/mila/neutral_heavy_load.png', // charge da esfera
-  neutral_heav_load:  'sprites/mila/neutral_heav_load.png',   // alias legado
-  side_heavy:        'sprites/mila/side_heavy.png',
-  side_heavy_fx:     'sprites/mila/side_heavy_fx.png',  // efeito do raio separado
-  down_heavy_load:   'sprites/mila/down_heavy_load.png', // carregando (fase 1)
-  down_heavy:        'sprites/mila/down_heavy.png',       // golpe (fase 2)
-  down_heavy_fx:     'sprites/mila/down_heavy_fx.png',    // lightning (fase 3)
-  air_neutral_light: 'sprites/mila/air_neutral_light.png',
-  air_side_light:    'sprites/mila/air_side_light.png',
-  air_down_light:    'sprites/mila/air_down_light.png',
-  recovery:          'sprites/mila/recovery.png',
-  ground_pound:      'sprites/mila/ground_pound.png',
+  idle:    'sprites/fezo/idle.png',
+  stance:  'sprites/fezo/stance.png',
+  punch:   'sprites/fezo/punch.png',
+  kick:    'sprites/fezo/kick.png',
+  jump:    'sprites/fezo/jump.png',
+  hitstun: 'sprites/fezo/hitstun.png',
+  // 11 ataques — padrão: neutro/lateral corpo a corpo, ÚNICA magia = down_heavy
+  neutral_light:     'sprites/fezo/neutral_light.png',
+  side_light:        'sprites/fezo/side_light.png',
+  down_light:        'sprites/fezo/down_light.png',
+  neutral_heavy:     'sprites/fezo/neutral_heavy.png', // corpo a corpo
+  neutral_heavy_load: 'sprites/fezo/neutral_heavy_load.png', // legado (não exigido)
+  neutral_heav_load:  'sprites/fezo/neutral_heav_load.png',   // alias legado
+  side_heavy:        'sprites/fezo/side_heavy.png', // corpo a corpo
+  side_heavy_fx:     'sprites/fezo/side_heavy_fx.png',  // legado (não exigido)
+  down_heavy_load:   'sprites/fezo/down_heavy_load.png', // magia fase 1: carregando
+  down_heavy:        'sprites/fezo/down_heavy.png',       // magia fase 2: golpe
+  down_heavy_fx:     'sprites/fezo/down_heavy_fx.png',    // magia fase 3: efeito no chão
+  air_neutral_light: 'sprites/fezo/air_neutral_light.png',
+  air_side_light:    'sprites/fezo/air_side_light.png',
+  air_down_light:    'sprites/fezo/air_down_light.png',
+  recovery:          'sprites/fezo/recovery.png',
+  ground_pound:      'sprites/fezo/ground_pound.png',
   walk: [
-    'sprites/mila/walk/walk1.png','sprites/mila/walk/walk2.png',
-    'sprites/mila/walk/walk3.png','sprites/mila/walk/walk4.png',
-    'sprites/mila/walk/walk5.png','sprites/mila/walk/walk6.png',
-    'sprites/mila/walk/walk7.png','sprites/mila/walk/walk8.png',
+    'sprites/fezo/walk/walk1.png','sprites/fezo/walk/walk2.png',
+    'sprites/fezo/walk/walk3.png','sprites/fezo/walk/walk4.png',
+    'sprites/fezo/walk/walk5.png','sprites/fezo/walk/walk6.png',
+    'sprites/fezo/walk/walk7.png','sprites/fezo/walk/walk8.png',
   ],
 });
 
@@ -305,8 +380,18 @@ const CPU_COMBOS = {
 
 // updateCPU: chamado 1x por gameStep. Gerencia a máquina de estados da IA.
 // Não age quando em hitstun ou no meio de um ataque (locked).
+// [microteste] dummy de treino: CPU parada, regenera HP p/ nunca morrer.
+// Voltar pra false quando terminar os testes de combo.
+const CPU_TRAINING_DUMMY = true;
+
 function updateCPU() {
   if (gameOver) return;
+  if (CPU_TRAINING_DUMMY) {
+    cpu.vx = 0;
+    if (!cpu.locked && cpu.hitstun <= 0 && !cpu.knockdown && cpu.state !== 'idle') cpu.setState('idle');
+    if (cpu.hp < cpu.maxHP) cpu.hp = Math.min(cpu.maxHP, cpu.hp + 2);
+    return;
+  }
   if (cpu.hitstun > 0) { cpuReactionTimer = 20; return; }
   if (cpu.locked) return;
 
@@ -526,9 +611,36 @@ let timerLastMs = 0;   // timestamp do último decremento do timer
 //   ⚔ TROCAR: abre a charselect para escolher novos personagens
 // Controles mobile ficam com pointer-events:none durante o KO
 // para evitar que botões do jogo sejam tocados acidentalmente.
+// ── Cinemático de KO (slow motion) ────────────────────────────────
+// Ao zerar o HP: beginKO() congela inputs/IA, aplica slow motion e
+// screen shake por ~1.2s enquanto os corpos voam; então finishKO()
+// mostra o overlay de revanche.
 let gameOver = false;
+let koCineSteps = 0;    // steps restantes do cinemático (tempo escalado)
+let koWinner    = '';
+const KO_CINE_LEN = 26; // duração em steps (a 0.3x ≈ 1.2s reais)
+const KO_SLOWMO   = 0.3;
+
+function beginKO(winner) {
+  if (gameOver) return;
+  gameOver = true;
+  koWinner = winner;
+  stopMusic();
+  triggerShake(16, 22);
+  flashAlpha = 0.5;
+  player.inputDisabled = true;
+  koCineSteps = KO_CINE_LEN;
+}
 
 const koOverlay = document.createElement('div');
+function finishKO() {
+  koCineSteps = 0;
+  document.getElementById('ko-sub').textContent = koWinner + ' WINS!';
+  koOverlay.classList.add('visible');
+  // Esconde controles mobile durante o KO para não interferir nos botões
+  const mob = document.getElementById('mobile-controls');
+  if (mob) mob.style.pointerEvents = 'none';
+}
 koOverlay.id = 'ko-overlay';
 koOverlay.innerHTML = `
   <div id="ko-text">K.O.</div>
@@ -557,24 +669,14 @@ document.getElementById('ko-charsel').addEventListener('click', () => {
 // Guarda a última seleção para revanche
 let _lastSelection = null;
 
-function showKO(winner) {
-  if (gameOver) return;
-  gameOver = true;
-  stopMusic();
-  document.getElementById('ko-sub').textContent = winner + ' WINS!';
-  koOverlay.classList.add('visible');
-  // Esconde controles mobile durante o KO para não interferir nos botões
-  const mob = document.getElementById('mobile-controls');
-  if (mob) mob.style.pointerEvents = 'none';
-}
-
 // ── Apply selection ───────────────────────────────────────────────
 // Chamado pela charselect ao confirmar personagens.
 // Recarrega sprites, reseta posições, HP, combate e timer.
 // makeSprites() monta o mapa de sprites usando o folder do personagem.
 function applySelection(sel) {
   _lastSelection = sel;
-  function makeSprites(folder, walkFrames) {
+  function makeSprites(folder, walkFrames, frameCounts = {}) {
+    // PADRÃO: neutral/side_heavy corpo a corpo; ÚNICA magia = down_heavy.
     // Cada ataque tem seu sprite dedicado com nome exato.
     // O _getCurrentSprite() no player.js já tem fallback caso o arquivo não exista.
     const map = {
@@ -591,12 +693,14 @@ function applySelection(sel) {
       neutral_light:     folder+'/neutral_light.png',
       side_light:        folder+'/side_light.png',
       down_light:        folder+'/down_light.png',
-      // Terra — pesados (Signatures)
+      // Terra — pesados: neutro/lateral CORPO A CORPO (sem magia, sem _fx obrigatório)
       neutral_heavy:     folder+'/neutral_heavy.png',
-      neutral_heavy_load: folder+'/neutral_heavy_load.png', // charge frame
+      neutral_heavy_load: folder+'/neutral_heavy_load.png', // legado (não exigido)
       neutral_heav_load:  folder+'/neutral_heav_load.png',   // legado
       side_heavy:        folder+'/side_heavy.png',
-      side_heavy_fx:     folder+'/side_heavy_fx.png',
+      side_heavy_fx:     folder+'/side_heavy_fx.png', // legado (não exigido)
+      // ÚNICA MAGIA — 3 fases obrigatórias:
+      //   down_heavy_load (agachado carregando) + down_heavy (golpe) + down_heavy_fx (magia no chão)
       down_heavy_load:   folder+'/down_heavy_load.png',
       down_heavy:        folder+'/down_heavy.png',
       down_heavy_fx:     folder+'/down_heavy_fx.png',
@@ -604,11 +708,22 @@ function applySelection(sel) {
       air_neutral_light: folder+'/air_neutral_light.png',
       air_side_light:    folder+'/air_side_light.png',
       air_down_light:    folder+'/air_down_light.png',
-      // Ar — pesados (Recovery + Ground Pound, sem Side Air Heavy)
+      // Ar — pesados corpo a corpo (recovery = impulso p/ cima, ground_pound = despenca de cima p/ baixo)
       recovery:          folder+'/recovery.png',
       ground_pound:      folder+'/ground_pound.png',
     };
-    if (walkFrames    && walkFrames.length    > 0) map.walk    = walkFrames;
+    // ── Frames extras por ataque (ANIMAÇÃO MULTI-FRAME) ──────────
+    // Convenção de arquivos:  <folder>/<ataque>_N.png  (N começa em 1)
+    //   Ex.: frameCounts = { neutral_light: 3 } carrega:
+    //     neutral_light_1.png, neutral_light_2.png, neutral_light_3.png
+    // A sequência toca UMA vez por golpe, distribuída pela duração do
+    // estado — adicionar/remover frames nunca quebra as hitboxes.
+    // Estados de loop (idle/walk/stance/crouch/jump) repetem em ciclo.
+    for (const [atk, n] of Object.entries(frameCounts)) {
+      if (!map[atk] || n <= 1) continue;
+      map[atk] = Array.from({ length: n }, (_, i) => `${folder}/${atk}_${i + 1}.png`);
+    }
+    if (walkFrames && walkFrames.length > 0) map.walk = walkFrames;
     return map;
   }
 
@@ -618,8 +733,8 @@ function applySelection(sel) {
   player.loadMoveset();
   cpu.loadMoveset();
 
-  player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames));
-  cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames));
+  player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames, sel.player.frameCounts));
+  cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames, sel.cpu.frameCounts));
 
   document.querySelector('#player-hud .hud-name').textContent = sel.player.name;
 
@@ -634,6 +749,7 @@ function applySelection(sel) {
   cpu.facing = -1;
 
   timeLeft = TIMER_SEC; timerLastMs = 0; gameOver = false;
+  koCineSteps = 0; player.inputDisabled = false;
   hitTexts.length = 0; flashAlpha = 0;
   updateHUD();
   startMusic();
@@ -656,7 +772,8 @@ function gameLoop(timestamp) {
   if (lastTime === 0) { lastTime = timestamp; return; }
   const elapsed = Math.min(timestamp - lastTime, 100); // cap 100ms (tab em bg)
   lastTime = timestamp;
-  accumulator += elapsed;
+  // Slow motion durante o cinemático de KO: acumula menos tempo
+  accumulator += elapsed * (koCineSteps > 0 ? KO_SLOWMO : 1);
 
   // Máximo 3 steps por frame — evita spiral of death em lag spikes
   // mas garante que 30fps rode 2 steps (cobrindo os 33ms do frame)
@@ -664,27 +781,40 @@ function gameLoop(timestamp) {
   while (accumulator >= FIXED_DT && steps < 3) {
     accumulator -= FIXED_DT;
     gameStep();
+    // Contagem do cinemático de KO → mostra overlay ao terminar
+    if (koCineSteps > 0 && --koCineSteps === 0) finishKO();
     steps++;
   }
 
+  updateShake();
+  updateParticles();
+
   // ── RENDER + checagens únicas por frame ───────────────────────
+  // Screen shake: desloca todo o mundo desenhado
+  const shx = (Math.random() * 2 - 1) * shakeMag;
+  const shy = (Math.random() * 2 - 1) * shakeMag;
+  ctx.save();
+  ctx.translate(shx, shy);
+
   if (bgImg.complete && bgImg.naturalWidth > 0) {
-    const bw = bgImg.naturalWidth, bh = bgImg.naturalHeight;
-    const sc = Math.max(GAME_W/bw, GAME_H/bh);
-    ctx.drawImage(bgImg, (GAME_W-bw*sc)/2, (GAME_H-bh*sc)/2, bw*sc, bh*sc);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    // Margem extra no background para cobrir as bordas durante o shake
+    const M = 24;
+    ctx.drawImage(bgImg, -M, -M, GAME_W + M*2, GAME_H + M*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-30,-30,GAME_W+60,GAME_H+60);
     const grd = ctx.createLinearGradient(0,GROUND_Y-2,0,GROUND_Y+20);
     grd.addColorStop(0,'rgba(0,0,0,0.5)'); grd.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle = grd; ctx.fillRect(0,GROUND_Y-2,GAME_W,22);
+    ctx.fillStyle = grd; ctx.fillRect(-30,GROUND_Y-2,GAME_W+60,22);
   } else {
     drawStageFallback();
   }
 
+  drawParticles();
   cpu.draw(ctx);
   player.draw(ctx);
   if (DEBUG_HITBOXES) { drawDebugHitboxes(ctx, player); drawDebugHitboxes(ctx, cpu); }
   drawHitTexts();
   drawComboTexts();
+  ctx.restore();
   drawFlash();
 
   // Timer baseado em tempo real (ms) — funciona igual em qualquer framerate
@@ -694,10 +824,10 @@ function gameLoop(timestamp) {
       timerLastMs += 1000; // avança exatamente 1s (sem drift)
       timeLeft = Math.max(0, timeLeft - 1);
       timerEl.textContent = String(timeLeft).padStart(2, '0');
-      if (timeLeft <= 0) showKO(player.hp >= cpu.hp ? 'PLAYER' : 'CPU');
+      if (timeLeft <= 0) beginKO(player.hp >= cpu.hp ? 'PLAYER' : 'CPU');
     }
-    if (player.hp <= 0) showKO('CPU');
-    if (cpu.hp    <= 0) showKO('PLAYER');
+    if (player.hp <= 0) beginKO('CPU');
+    if (cpu.hp    <= 0) beginKO('PLAYER');
   }
 
   updateHUD();
@@ -707,14 +837,19 @@ function gameLoop(timestamp) {
 // gameStep: física, input e AI — roda a 60 steps/segundo fixos.
 // NÃO contém timer nem checagem de HP (essas ficam no render loop,
 // 1x por frame) para não acelerar em telas de alta frequência.
+// Durante o cinemático de KO: física continua (corpos voam em slowmo),
+// mas sem IA, sem novos hits e com input travado (inputDisabled).
 function gameStep() {
-  if (!gameOver) {
+  const cine = koCineSteps > 0;
+  if (!gameOver || cine) {
     player.update(cpu);
-    updateCPU();
+    if (!gameOver) updateCPU();
     cpu.update(player);
-    // Checa colisões hitbox vs hurtbox após os updates
-    player.checkHitboxCollision(cpu);
-    cpu.checkHitboxCollision(player);
+    // Colisões só durante a luta normal (sem novos hits no cinemático)
+    if (!gameOver) {
+      player.checkHitboxCollision(cpu);
+      cpu.checkHitboxCollision(player);
+    }
   }
   Input.flush();
 }

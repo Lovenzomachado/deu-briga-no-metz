@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SPRITES — Padronização | DEU BRIGA NO METZ</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root { --gold:#f5c518; --green:#00ff88; --red:#ff3c3c; --dark:#0a0a0f; --panel:#14141c; --line:#ffffff18; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { background:var(--dark); color:#ddd; font-family:'Press Start 2P',monospace; min-height:100%; }
+  body { padding:28px 22px 80px; max-width:1280px; margin:0 auto; }
+  header.top { text-align:center; margin-bottom:22px; }
+  header.top h1 { font-family:'Bebas Neue',sans-serif; font-size:52px; letter-spacing:6px; color:var(--gold); text-shadow:0 0 20px var(--gold); }
+  header.top p { font-size:9px; color:#888; margin-top:10px; line-height:1.9; letter-spacing:1px; }
+  .badges { display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap; }
+  .badge { font-size:7px; padding:8px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); letter-spacing:1px; }
+  .badge b { color:var(--gold); }
+  .badge .ok { color:var(--green); } .badge .miss { color:var(--red); }
+  section { margin-top:28px; }
+  section h2 { font-family:'Bebas Neue',sans-serif; font-size:30px; letter-spacing:4px; color:#fff; margin-bottom:4px; }
+  section .sub { font-size:8px; color:#888; margin-bottom:14px; line-height:1.8; }
+  table.std { width:100%; border-collapse:collapse; font-size:7px; line-height:1.7; }
+  table.std th, table.std td { border:1px solid var(--line); padding:9px 8px; text-align:left; vertical-align:top; }
+  table.std th { background:#1c1c26; color:var(--gold); font-size:7px; letter-spacing:1px; }
+  table.std td small { color:#888; display:block; margin-top:4px; line-height:1.7; }
+  .tag { display:inline-block; font-size:6px; padding:3px 7px; border-radius:3px; letter-spacing:1px; margin-top:5px; }
+  .tag.corpo { background:#123322; color:var(--green); border:1px solid #00ff8855; }
+  .tag.magia { background:#3a1020; color:#ff88aa; border:1px solid #ff448855; }
+  .tag.ar { background:#10233a; color:#80c8ff; border:1px solid #50b4ff55; }
+  .toolbar { display:flex; gap:10px; margin:14px 0; flex-wrap:wrap; align-items:center; }
+  .toolbar input { flex:1; min-width:220px; background:#000; border:1px solid var(--line); color:#fff; font-family:inherit; font-size:8px; padding:11px 12px; border-radius:4px; }
+  .toolbar label { font-size:7px; color:#aaa; display:flex; gap:8px; align-items:center; background:var(--panel); padding:11px 12px; border-radius:4px; border:1px solid var(--line); cursor:pointer; }
+  .char { background:var(--panel); border:1px solid var(--line); border-radius:8px; margin-bottom:18px; overflow:hidden; }
+  .char-head { display:flex; gap:14px; align-items:center; padding:16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .dot { width:18px; height:18px; border-radius:50%; flex-shrink:0; box-shadow:0 0 12px currentColor; }
+  .char-head h3 { font-family:'Bebas Neue',sans-serif; font-size:26px; letter-spacing:3px; }
+  .char-head .meta { font-size:7px; color:#999; line-height:2; }
+  .char-head .meta code { color:var(--gold); }
+  .progress { margin-left:auto; min-width:220px; flex:1; max-width:340px; }
+  .progress .bar { height:10px; background:#000; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+  .progress .fill { height:100%; background:linear-gradient(90deg,#00c853,var(--green)); width:0%; transition:width .3s; }
+  .progress span { font-size:7px; color:#aaa; display:block; margin-top:6px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:10px; padding:16px; }
+  .tile { background:#0c0c12; border:1px solid var(--line); border-radius:6px; padding:10px 8px; text-align:center; }
+  .tile .img { height:84px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:4px; margin-bottom:8px; overflow:hidden; }
+  .tile img { max-height:80px; max-width:100%; image-rendering:pixelated; }
+  .tile .noimg { font-size:18px; opacity:.35; }
+  .tile code { font-size:6px; color:#ccc; display:block; line-height:1.6; word-break:break-all; }
+  .tile .st { font-size:6px; margin-top:7px; display:inline-block; padding:4px 8px; border-radius:3px; letter-spacing:1px; }
+  .tile.ok { border-color:#00ff8855; } .tile.ok .st { background:#123322; color:var(--green); }
+  .tile.miss { border-color:#ff3c3c44; opacity:.85; } .tile.miss .st { background:#3a1010; color:var(--red); }
+  .tile .cat { font-size:5px; color:#666; display:block; margin-top:6px; letter-spacing:1px; }
+  .tile.frame { border-style:dashed; }
+  .tile.frame .img { height:64px; }
+  .tile.frame img { max-height:60px; }
+  .tile.frame code { color:var(--gold); }
+  .group-title { grid-column:1/-1; font-size:8px; color:var(--gold); letter-spacing:2px; margin:8px 0 2px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+  .frame-note { grid-column:1/-1; font-size:6px; color:#888; line-height:1.8; background:#0c0c12; border:1px dashed var(--line); border-radius:6px; padding:10px 12px; }
+  footer { text-align:center; margin-top:30px; font-size:7px; color:#555; line-height:2; }
+  footer code { color:var(--gold); }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>SPRITES × PADRONIZAÇÃO</h1>
+  <p>CAIXA 160×200 · PÉS NA BASE · FACING DIREITA · FUNDO TRANSPARENTE<br>
+  NEUTRO/LATERAL = CORPO A CORPO · ÚNICA MAGIA = DOWN_HEAVY (3 FASES) · GROUND_POUND = NO AR DE CIMA P/ BAIXO</p>
+  <div class="badges">
+    <div class="badge"><b id="b-total">23</b> PERSONAGENS</div>
+    <div class="badge"><span class="ok" id="b-ok">0</span> ARQUIVOS OK</div>
+    <div class="badge"><span class="miss" id="b-miss">0</span> FALTANDO</div>
+    <div class="badge">PADRÃO MULTI <b>STANDARD_FRAME_COUNTS</b></div>
+  </div>
+</header>
+
+<section>
+  <h2>1 · PADRÃO DE GOLPES</h2>
+  <div class="sub">11 ataques que entram em combo + base. Ranges e frames vindos de <code>hitboxes.js</code> / <code>player.js</code>. Recorte do vídeo nesta ordem.</div>
+  <table class="std">
+    <tr><th>GOLPE</th><th>INPUT</th><th>TIPO</th><th>RANGE / HITBOX</th><th>SPRITE (MULTI-FRAME)</th></tr>
+    <tr><td>neutral_light</td><td>J neutro chão</td><td><span class="tag corpo">LEVE CORPO</span></td><td>90px · 18f (4-6)</td><td>neutral_light_1..3.png<small>jab curto centro</small></td></tr>
+    <tr><td>side_light</td><td>J + lado</td><td><span class="tag corpo">LEVE CORPO</span></td><td>95px · 20f (5-7)</td><td>side_light_1..3.png<small>soco estendido curto</small></td></tr>
+    <tr><td>down_light</td><td>J + baixo</td><td><span class="tag corpo">LAUNCHER</span></td><td>100px · 22f (5-7)</td><td>down_light_1..3.png<small>uppercut baixo→cima</small></td></tr>
+    <tr><td>neutral_heavy</td><td>solta K neutro</td><td><span class="tag corpo">PESADO CORPO</span></td><td>110px · 30f (8-11)</td><td>neutral_heavy_1..4.png<small>soco direto, sem esfera</small></td></tr>
+    <tr><td>side_heavy</td><td>solta K + lado</td><td><span class="tag corpo">PESADO CORPO</span></td><td>115px · 32f (8-10)</td><td>side_heavy_1..4.png<small>gancho lateral, sem raio</small></td></tr>
+    <tr><td>down_heavy</td><td>solta K + baixo</td><td><span class="tag magia">ÚNICA MAGIA</span></td><td><b>280px ambos lados</b> · 38f (11-14), rente ao chão</td><td>down_heavy_load_1..3 + down_heavy_1..4 + down_heavy_fx_1..3<small>agachado carrega → solta → magia no chão</small></td></tr>
+    <tr><td>air_neutral_light</td><td>J ar neutro</td><td><span class="tag ar">AR LEVE</span></td><td>95px · 20f</td><td>air_neutral_light_1..2.png<small>joelhos altos</small></td></tr>
+    <tr><td>air_side_light</td><td>J ar + lado</td><td><span class="tag ar">AR LEVE</span></td><td>95px · 20f</td><td>air_side_light_1..2.png<small>chute voador</small></td></tr>
+    <tr><td>air_down_light</td><td>J ar + baixo</td><td><span class="tag ar">AR LEVE</span></td><td>área · 22f</td><td>air_down_light_1..2.png<small>split p/ baixo</small></td></tr>
+    <tr><td>recovery</td><td>solta K ar neutro</td><td><span class="tag ar">PESADO AR CORPO</span></td><td>105px · 30f, impulso p/ cima</td><td>recovery_1..3.png<small>braços p/ cima, sem magia</small></td></tr>
+    <tr><td>ground_pound</td><td>solta K ar + baixo</td><td><span class="tag ar">PESADO AR CORPO</span></td><td>área · 32f, knockdown</td><td>ground_pound_1..3.png<small><b>NO AR de cima p/ baixo</b>, despenca, sem raios</small></td></tr>
+    <tr><td>base</td><td>—</td><td><span class="tag corpo">BASE LOOP</span></td><td>idle/stance/walk/jump ciclam</td><td>idle_1..3 · stance_1..2 · jump_1..2 · walk1..8 · crouch · dodge · hitstun_1..2 · splash.png</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>2 · PERSONAGENS × ARQUIVOS</h2>
+  <div class="sub">Verde = existe e carrega · Vermelho = falta (o jogo usa fallback e não quebra).<br>Tracejado dourado = <b>entre-frames</b> (<code>_1..N.png</code>). Single <code>.png</code> = legado. Ative <code>frameCounts: STANDARD_FRAME_COUNTS</code> no ROSTER quando os entre-frames existirem.</div>
+  <div class="toolbar">
+    <input id="q" placeholder="filtrar por nome ou id... (ex: fezo, lovenzo)" />
+    <label><input type="checkbox" id="only-miss" /> só com falta</label>
+  </div>
+  <div id="chars"></div>
+</section>
+
+<footer>GERADO DA PASTA <code>sprites/</code> · CONVENÇÃO <code>sprites/&lt;id&gt;/&lt;estado&gt;[_N].png</code> · <code>makeSprites()</code> EM <code>game.js</code></footer>
+
+<script>
+const ROSTER = [
+  {id:'metz', name:'HENRIQUE', folder:'sprites/metz', color:'#3a8c3f'},
+  {id:'fezo', name:'FEZO', folder:'sprites/fezo', color:'#8b3a6a'},
+  {id:'lovenzo', name:'LOVENZO', folder:'sprites/lovenzo', color:'#ff4422'},
+  {id:'billy', name:'BILLY', folder:'sprites/billy', color:'#3388ff'},
+  {id:'pande', name:'PANDE', folder:'sprites/pande', color:'#cc44ff'},
+  {id:'navi', name:'NAVI', folder:'sprites/navi', color:'#00ffcc'},
+  {id:'siririck', name:'SIRIRICK', folder:'sprites/siririck', color:'#ffcc00'},
+  {id:'cxntia', name:'CXNTIA', folder:'sprites/cxntia', color:'#ff66aa'},
+  {id:'marea', name:'MAREA', folder:'sprites/marea', color:'#22aaff'},
+  {id:'rod', name:'ROD', folder:'sprites/rod', color:'#ff2244'},
+  {id:'carolis', name:'CAROLIS', folder:'sprites/carolis', color:'#44ff88'},
+  {id:'otaviu', name:'OTAVIU', folder:'sprites/otaviu', color:'#ff8833'},
+  {id:'duda', name:'DUDA', folder:'sprites/duda', color:'#8844ff'},
+  {id:'anna', name:'ANNA', folder:'sprites/anna', color:'#ffdd33'},
+  {id:'luffany', name:'LUFFANY', folder:'sprites/luffany', color:'#00ddff'},
+  {id:'july', name:'JULY', folder:'sprites/july', color:'#ff44cc'},
+  {id:'mec7', name:'MEC7', folder:'sprites/mec7', color:'#aaaaaa'},
+  {id:'zeg', name:'ZEG', folder:'sprites/zeg', color:'#aaff22'},
+  {id:'amandinha', name:'AMANDINHA', folder:'sprites/amandinha', color:'#ff99cc'},
+  {id:'dudablini', name:'DUDA BLINI', folder:'sprites/dudablini', color:'#4466ff'},
+  {id:'neves', name:'NEVES', folder:'sprites/neves', color:'#aaffff'},
+  {id:'isabela', name:'ISA E BELA', folder:'sprites/isabela', color:'#ff33ff'},
+  {id:'ujnior', name:'UJNIOR', folder:'sprites/ujnior', color:'#ffaa22'},
+];
+
+// Padrão multi-frame (igual ao STANDARD_FRAME_COUNTS do charselect.js).
+// Cada chave vira entre-frames <base>_1..N.png + mantém o single .png como legado.
+const STANDARD = {
+  idle: 3, stance: 2, jump: 2, hitstun: 2,
+  neutral_light: 3, side_light: 3, down_light: 3,
+  neutral_heavy: 4, side_heavy: 4,
+  down_heavy: 4, down_heavy_load: 3, down_heavy_fx: 3,
+  air_neutral_light: 2, air_side_light: 2, air_down_light: 2,
+  recovery: 3, ground_pound: 3,
+};
+
+const GROUPS = [
+  {title:'BASE (LOOP)', bases:['idle','stance','jump','crouch','dodge','hitstun'], extras:['punch.png','kick.png','splash.png']},
+  {title:'LEVES CHÃO', bases:['neutral_light','side_light','down_light']},
+  {title:'PESADOS CORPO A CORPO', bases:['neutral_heavy','side_heavy']},
+  {title:'ÚNICA MAGIA — DOWN_HEAVY 3 FASES', bases:['down_heavy_load','down_heavy','down_heavy_fx']},
+  {title:'AÉREOS LEVES', bases:['air_neutral_light','air_side_light','air_down_light']},
+  {title:'AÉREOS PESADOS CORPO (GROUND_POUND = CIMA → BAIXO NO AR)', bases:['recovery','ground_pound']},
+  {title:'WALK ×8', files:['walk/walk1.png','walk/walk2.png','walk/walk3.png','walk/walk4.png','walk/walk5.png','walk/walk6.png','walk/walk7.png','walk/walk8.png']},
+  {title:'LEGADO (NÃO EXIGIDO)', files:['neutral_heavy_load.png','side_heavy_fx.png']},
+];
+
+// Expande uma base em [single.png + _1..N.png] quando há padrão, senão só [single.png].
+function expandBase(base){
+  const n = STANDARD[base];
+  const out = [{file: base + '.png', frame: 0}];
+  if (n && n > 1) for (let i = 1; i <= n; i++) out.push({file: `${base}_${i}.png`, frame: i, total: n});
+  return out;
+}
+
+let totalOk = 0, totalMiss = 0;
+const wrap = document.getElementById('chars');
+
+function tile(folder, file, cat, frameInfo){
+  const isFrame = frameInfo && frameInfo.frame > 0;
+  const div = document.createElement('div');
+  div.className = 'tile miss' + (isFrame ? ' frame' : '');
+  const tag = isFrame ? `F${frameInfo.frame}/${frameInfo.total}` : (cat || '');
+  div.innerHTML = `<div class="img"><span class="noimg">✕</span></div><code>${file}</code><br><span class="st">${isFrame ? 'FALTA F' + frameInfo.frame : 'FALTA'}</span><span class="cat">${isFrame ? 'ENTRE-FRAME · ' + cat : cat}</span>`;
+  const img = new Image();
+  img.onload = () => {
+    div.className = 'tile ok' + (isFrame ? ' frame' : '');
+    div.querySelector('.img').innerHTML = '';
+    div.querySelector('.img').appendChild(img);
+    div.querySelector('.st').textContent = isFrame ? 'OK F' + frameInfo.frame : 'OK';
+    totalOk++; bump();
+    const card = div.closest('.char');
+    if (card) updateCard(card);
+  };
+  img.onerror = () => { totalMiss++; bump(); const card = div.closest('.char'); if (card) updateCard(card); };
+  img.src = folder + '/' + file;
+  img.alt = file;
+  return div;
+}
+function bump(){
+  document.getElementById('b-ok').textContent = totalOk;
+  document.getElementById('b-miss').textContent = totalMiss;
+}
+function updateCard(card){
+  const ok = card.querySelectorAll('.tile.ok').length;
+  const all = card.querySelectorAll('.tile').length;
+  const pct = Math.round(ok/all*100);
+  card.querySelector('.fill').style.width = pct + '%';
+  card.querySelector('.pct').textContent = `${ok}/${all} arquivos · ${pct}%`;
+  card.dataset.missing = all - ok;
+}
+function render(filter='', onlyMiss=false){
+  wrap.innerHTML = '';
+  ROSTER
+    .filter(c => (c.name + c.id).toLowerCase().includes(filter.toLowerCase()))
+    .forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'char';
+      card.innerHTML = `<div class="char-head">
+        <div class="dot" style="background:${c.color};color:${c.color}"></div>
+        <h3>${c.name}</h3>
+        <div class="meta">id <code>${c.id}</code> · <code>${c.folder}</code><br>multi-frame: <code>${c.folder}/&lt;golpe&gt;_1..N.png</code></div>
+        <div class="progress"><div class="bar"><div class="fill"></div></div><span class="pct">…</span></div>
+      </div>`;
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      GROUPS.forEach(g => {
+        const t = document.createElement('div');
+        t.className = 'group-title'; t.textContent = g.title;
+        grid.appendChild(t);
+        if (g.bases) {
+          g.bases.forEach(base => {
+            const n = STANDARD[base];
+            const note = document.createElement('div');
+            note.className = 'frame-note';
+            note.textContent = n > 1
+              ? `${base}: single ${base}.png (legado) + entre-frames ${base}_1..${n}.png — sequência toca 1x por golpe / cicla se loop`
+              : `${base}: single ${base}.png`;
+            grid.appendChild(note);
+            expandBase(base).forEach(e => grid.appendChild(tile(c.folder, e.file, g.title, e)));
+          });
+        }
+        (g.files || []).forEach(f => grid.appendChild(tile(c.folder, f, g.title, null)));
+        if (g.extras) g.extras.forEach(f => grid.appendChild(tile(c.folder, f, g.title, null)));
+      });
+      card.appendChild(grid);
+      card.dataset.name = c.name;
+      wrap.appendChild(card);
+      updateCard(card);
+    });
+  applyMissFilter();
+}
+function applyMissFilter(){
+  const only = document.getElementById('only-miss').checked;
+  document.querySelectorAll('.char').forEach(card => {
+    const miss = parseInt(card.dataset.missing || '0', 10);
+    card.style.display = (!only || miss > 0) ? '' : 'none';
+  });
+}
+document.getElementById('q').addEventListener('input', e => render(e.target.value, document.getElementById('only-miss').checked));
+document.getElementById('only-miss').addEventListener('change', applyMissFilter);
+render();
+</script>
+</body>
+</html>

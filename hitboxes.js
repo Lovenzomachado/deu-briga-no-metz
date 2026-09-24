@@ -136,11 +136,14 @@ const BASE_MOVESET = {
     }
   },
 
-  // ── Terra — Pesados (Sigs) ────────────────────────────────────────
-  // Estes são sobrescritos por cada personagem. Valores padrão aqui.
+  // ── Terra — Pesados ───────────────────────────────────────────────
+  // PADRÃO: neutral_heavy e side_heavy são CORPO A CORPO (alcance ~115px).
+  // O ÚNICO golpe com magia é o down_heavy (padrão Fezo, área ampla).
+  // Valores padrão aqui; movesets por personagem herdam deste base.
 
   neutral_heavy: {
     totalFrames: 30,
+    // Soco direto corpo a corpo — 1 círculo frontal, sem magia
     frames: {
       8:  { hitboxes: [ createCircle(65, -100, 28) ] },
       9:  { hitboxes: [ createCircle(72, -98,  30) ] },
@@ -150,6 +153,7 @@ const BASE_MOVESET = {
 
   side_heavy: {
     totalFrames: 32,
+    // Gancho/chute lateral corpo a corpo — alcance curto, sem raio
     frames: {
       8:  { hitboxes: [ createCircle(70, -90, 26), createCircle(90, -85, 22) ] },
       9:  { hitboxes: [ createCircle(85, -88, 28), createCircle(105,-82, 20) ] },
@@ -158,11 +162,38 @@ const BASE_MOVESET = {
   },
 
   down_heavy: {
-    totalFrames: 34,
+    // ── ÚNICO ESPECIAL COM MAGIA (padrão Fezo p/ todos) ──────────
+    // 3 fases: load (frames 1-10 sem hitbox) + golpe + fx (frames 11-14).
+    // Área ampla rente ao chão, ambos os lados (~250px).
+    totalFrames: 38,
     frames: {
-      9:  { hitboxes: [ createCircle(50, -80, 28), createCircle(60, -55, 24) ] },
-      10: { hitboxes: [ createCircle(55, -75, 30), createCircle(65, -50, 26) ] },
-      11: { hitboxes: [ createCircle(52, -72, 26) ] },
+      11: { hitboxes: [
+              createCircle(60,  -30, 28),
+              createCircle(110, -22, 30),
+              createCircle(160, -18, 26),
+            ] },
+      12: { hitboxes: [
+              createCircle(70,  -28, 30),
+              createCircle(130, -20, 32),
+              createCircle(200, -15, 28),
+              createCircle(250, -12, 22),
+              // Lado oposto (magia abre para ambos os lados)
+              createCircle(-60, -30, 26),
+              createCircle(-110,-22, 26),
+            ] },
+      13: { hitboxes: [
+              createCircle(80,  -26, 28),
+              createCircle(150, -18, 30),
+              createCircle(230, -12, 26),
+              createCircle(-70, -28, 24),
+              createCircle(-130,-20, 24),
+            ] },
+      14: { hitboxes: [
+              createCircle(100, -24, 26),
+              createCircle(180, -16, 24),
+              createCircle(-80, -26, 22),
+              createCircle(-150,-18, 22),
+            ] },
     }
   },
 
@@ -224,10 +255,11 @@ const BASE_MOVESET = {
 // ══════════════════════════════════════════════════════════════════
 
 // Henrique (charId = 1)
+// PADRÃO: heavies neutro/lateral corpo a corpo; down_heavy usa magia padrão Fezo (herda do base).
 const MOVESET_HENRIQUE = {
   ...BASE_MOVESET,
 
-  // Sig neutro: soco direto forte
+  // Neutro corpo a corpo: soco direto forte
   neutral_heavy: {
     totalFrames: 30,
     frames: {
@@ -238,7 +270,7 @@ const MOVESET_HENRIQUE = {
     }
   },
 
-  // Sig lateral: gancho largo
+  // Lateral corpo a corpo: gancho largo
   side_heavy: {
     totalFrames: 32,
     frames: {
@@ -248,76 +280,57 @@ const MOVESET_HENRIQUE = {
     }
   },
 
-  // Sig baixo: golpe no chão com área
-  down_heavy: {
-    totalFrames: 34,
-    frames: {
-      9:  { hitboxes: [ createCircle(45, -45, 32), createCircle(70, -30, 26) ] },
-      10: { hitboxes: [ createCircle(50, -40, 34), createCircle(75, -25, 28) ] },
-      11: { hitboxes: [ createCircle(55, -35, 30) ] },
-    }
-  },
+  // down_heavy: NÃO sobrescreve — usa o padrão Fezo do BASE_MOVESET (única magia).
 };
 
 // Fezo (charId = 2)
-// Sprites analisadas — calibração real por golpe:
+// PADRÃO NOVO — só down_heavy tem magia:
 //   neutral_light:     jab direto curto (alcance ~60px)
 //   side_light:        soco lateral estendido (alcance ~90px)
 //   down_light:        chute lateral com perna alta (alcance ~100px)
-//   neutral_heavy:     esfera de energia carregada — raio médio (~80px range)
-//   side_heavy:        raio horizontal longo — alcance ~200px
-//   down_heavy:        raios elétricos no chão — RANGE AMPLO (~250px, multi-hit)
+//   neutral_heavy:     CORPO A CORPO — soco direto curto (~110px, sem esfera)
+//   side_heavy:        CORPO A CORPO — gancho lateral curto (~115px, sem raio)
+//   down_heavy:        ÚNICA MAGIA — área ampla no chão (~250px, ambos lados)
 //   air_neutral_light: joelhos levantados no ar (próximo)
 //   air_side_light:    chute alto voador (alcance ~90px)
 //   air_down_light:    split aéreo (hitbox horizontal ampla)
-//   recovery:          uppercut com asa — acima da cabeça
-//   ground_pound:      queda com raios elétricos — área ao redor
+//   recovery:          CORPO A CORPO — braços p/ cima + impulso (sem asa mágica)
+//   ground_pound:      CORPO A CORPO — despenca de cima p/ baixo (sem raios)
 const MOVESET_FEZO = {
   ...BASE_MOVESET,
 
-  // ── Sig neutro: esfera de energia carregada ───────────────────
-  // neutral_heav_load = sprite de carregamento (sem hitbox)
-  // neutral_heavy = disparo — hitbox frontal média
+  // ── Neutro corpo a corpo ──────────────────────────────────────
+  // Sem esfera: soco direto curto, mesmo alcance do Henrique
   neutral_heavy: {
     totalFrames: 30,
     frames: {
-      8:  { hitboxes: [ createCircle(70, -100, 30), createCircle(95, -98, 26) ] },
-      9:  { hitboxes: [ createCircle(80, -98,  32), createCircle(108,-96, 28) ] },
-      10: { hitboxes: [ createCircle(90, -96,  30), createCircle(115,-94, 24) ] },
-      11: { hitboxes: [ createCircle(100,-94,  26) ] },
+      8:  { hitboxes: [ createCircle(70, -105, 30) ] },
+      9:  { hitboxes: [ createCircle(80, -102, 34) ] },
+      10: { hitboxes: [ createCircle(82, -100, 32) ] },
+      11: { hitboxes: [ createCircle(78, -98,  28) ] },
     }
   },
 
-  // ── Sig lateral: raio horizontal longo ───────────────────────
-  // side_heavy.png: Fezo estendida, raio vai longe
-  // Alcance real ~200px — hitboxes encadeadas em linha
+  // ── Lateral corpo a corpo ─────────────────────────────────────
+  // Sem raio: gancho curto, alcance 115px
   side_heavy: {
     totalFrames: 32,
     frames: {
-      7:  { hitboxes: [ createCircle(70, -95, 22) ] },
-      8:  { hitboxes: [
-              createCircle(80,  -95, 22),
-              createCircle(120, -93, 20),
-              createCircle(160, -91, 18),
-            ] },
-      9:  { hitboxes: [
-              createCircle(100, -95, 22),
-              createCircle(145, -93, 20),
-              createCircle(190, -91, 18),
-              createCircle(230, -89, 16),
-            ] },
-      10: { hitboxes: [ createCircle(200, -93, 20), createCircle(240, -91, 16) ] },
+      8:  { hitboxes: [ createCircle(65, -95, 28), createCircle(88, -88, 22) ] },
+      9:  { hitboxes: [ createCircle(80, -92, 30), createCircle(105,-84, 24) ] },
+      10: { hitboxes: [ createCircle(95, -90, 28) ] },
     }
   },
 
-  // ── Sig baixo: raios elétricos no chão — RANGE AMPLO ─────────
-  // down_heavy.png: Fezo agachada com raios saindo para os lados
+  // ── ÚNICA MAGIA: down_heavy (referência padrão p/ os 23) ────
+  // down_heavy_load.png: agachado carregando (sem hitbox)
+  // down_heavy.png: golpe agachado soltando p/ os lados
+  // down_heavy_fx.png: magia se espalhando no chão (elemento separado)
   // range: ~250px em ambas as direções, hitbox baixa (perto do chão)
-  // Dois hits: carregamento (sem hitbox) + liberação (área grande)
   down_heavy: {
     totalFrames: 38,
-    // Frames 1-10: carregamento (sem hitbox — sprite neutral_heav_load)
-    // Frames 11+: liberação dos raios
+    // Frames 1-10: carregamento (sem hitbox — sprite down_heavy_load)
+    // Frames 11+: liberação da magia
     frames: {
       11: { hitboxes: [
               createCircle(60,  -30, 28),
@@ -329,7 +342,7 @@ const MOVESET_FEZO = {
               createCircle(130, -20, 32),
               createCircle(200, -15, 28),
               createCircle(250, -12, 22),
-              // Lado oposto (raios vão para ambos os lados)
+              // Lado oposto (magia abre para ambos os lados)
               createCircle(-60, -30, 26),
               createCircle(-110,-22, 26),
             ] },
@@ -349,7 +362,7 @@ const MOVESET_FEZO = {
     }
   },
 };
-// Mapa charId → moveset
+// Mapa charId → moveset (hitbox idêntica p/ 1 e 2 agora; diferença é só visual)
 const MOVESETS = {
   1: MOVESET_HENRIQUE,
   2: MOVESET_FEZO,

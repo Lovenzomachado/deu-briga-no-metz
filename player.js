@@ -25,6 +25,21 @@
 //
 // FORÇA VARIÁVEL (Brawlhalla):
 //   force = baseForce * (dmgAccum/100 + dmgAccum²/20000)
+//
+// ANIMAÇÃO MULTI-FRAME:
+//   Cada estado aceita 1 sprite única OU um array de N frames.
+//   • Estados de LOOP (abaixo) ciclam os frames continuamente.
+//   • Todos os outros (ataques, hitstun...) tocam a sequência UMA vez,
+//     distribuída proporcionalmente pela duração do estado — adicionar
+//   ou remover frames NUNCA desincroniza o frame data das hitboxes
+//   (que continua indexado pelo contador lento this.frame).
+const LOOP_STATES = new Set(['idle', 'walk', 'stance', 'crouch', 'jump']);
+
+// Estados que geram afterimage (rastro/fantasma) durante a animação
+const TRAIL_STATES = new Set([
+  'neutral_heavy', 'side_heavy', 'down_heavy',
+  'recovery', 'ground_pound',
+]);
 
 class Player {
   constructor(config) {
@@ -41,7 +56,7 @@ class Player {
     this.maxHP    = 500;
     this.hp       = this.maxHP;
     this.dmgAccum = 0;
-    this.speed    = config.speed ?? 1.2;
+    this.speed    = config.speed ?? 2.2;  // [microteste 1A] era 1.2
 
     // ── Física ────────────────────────────────────────────────────
     this.vy        = 0;
@@ -88,6 +103,11 @@ class Player {
     this.frame      = 0;
     this.frameTimer = 0;
     this.sprites    = {};
+    // Multi-frame: progresso do estado atual (para play-once)
+    this.stateDuration = 0;  // duração total do estado em frames (0 = livre)
+    this.animElapsed   = 0;  // ticks decorridos desde o início do estado
+    this._trail        = []; // afterimages recentes {img,x,y,facing,life}
+    this.inputDisabled = false; // trava input (cinemático de KO)
 
     // ── Combate base ──────────────────────────────────────────────
     this.hitstun        = 0;
@@ -136,6 +156,9 @@ class Player {
     this.onHit   = null;
     this.onClash = null;
     this.onCombo = null;
+    this.onLand  = null;      // (impactVy) ao tocar o chão vindo do ar
+    this.onJump  = null;      // (isAirJump) ao pular
+    this.onStartDash = null;  // () ao iniciar dash
   }
 
   // ── Sprites ───────────────────────────────────────────────────────
@@ -186,18 +209,44 @@ class Player {
     this.hitRegistered  = false;
     this.state      = name;
     this.stateTimer = duration;
+    this.stateDuration = duration;
+    this.animElapsed   = 0;
     this.frame      = 0;
     this.frameTimer = 0;
     this.locked     = duration > 0;
   }
 
+  // ── Seleção de frame para arrays de sprites ────────────────────────
+  // LOOP (idle/walk/etc.): cicla os frames continuamente.
+  // Play-once (ataques): distribui os N frames pela duração do estado
+  // via progresso p ∈ [0,1] → índice proporcional.
+  _pickAnimIndex(len) {
+    if (LOOP_STATES.has(this.state) || this.stateDuration <= 0)
+      return this.frame % len;
+    const p = Math.min(1, this.animElapsed / this.stateDuration);
+    return Math.min(len - 1, Math.floor(p * len));
+  }
+
+  // Obtém uma entrada do mapa de sprites aceitando imagem única ou
+  // array de frames. Retorna a Image válida ou null.
+  _getAnimEntry(key) {
+    const e = this.sprites[key];
+    if (!e) return null;
+    const valid = img => img && img.complete && img.naturalWidth > 0;
+    if (Array.isArray(e)) {
+      if (e.length === 0) return null;
+      const idx = this._pickAnimIndex(e.length);
+      return valid(e[idx]) ? e[idx] : (valid(e[0]) ? e[0] : null);
+    }
+    return valid(e) ? e : null;
+  }
+
   // ── Sprite atual com fallback ──────────────────────────────────────
-  // Tenta obter o sprite exato para o estado atual.
-  // Se não existir, percorre a cadeia FB[] até encontrar um disponível.
-  // Isso permite o jogo funcionar mesmo sem todos os sprites gerados.
+  // Tenta obter o sprite exato para o estado atual (aceita array de
+  // frames). Se não existir, percorre a cadeia FB[] até encontrar um
+  // disponível. Permite o jogo funcionar sem todas as sprites geradas.
   _getCurrentSprite() {
     // Fallback em cadeia: tenta sprite dedicado → fallback1 → fallback2 → idle
-    // Ordem: sprite do nome exato → sprite legado (nomes antigos) → punch/kick → idle
     const FB = {
       // Terra leves
       neutral_light:     ['punch', 'ground_light'],
@@ -205,8 +254,7 @@ class Player {
       down_light:        ['kick',  'down_attack'],
       // Terra pesados (Sigs)
       neutral_heavy:     ['kick',  'ground_heavy'],
-      neutral_heavy_load:['neutral_heavy', 'kick'],
-      neutral_heavy_load: ['neutral_heavy', 'kick'], // charge da esfera
+      neutral_heavy_load:['neutral_heavy', 'kick'], // wind-up corpo a corpo (legado)
       neutral_heav_load:  ['neutral_heavy', 'kick'], // alias legado
       side_heavy:        ['kick',  'ground_heavy'],
       down_heavy:        ['kick',  'down_attack'],
@@ -224,26 +272,17 @@ class Player {
       crouch:            ['idle'],
       dodge:             ['idle'],
     };
-    const tryGet = (k) => {
-      const e = this.sprites[k]; if (!e) return null;
-      if (Array.isArray(e)) {
-        // Array de frames de animação
-        const img = e[this.frame % e.length];
-        if (img?.complete && img.naturalWidth > 0) return img;
-        const i0 = e[0]; return (i0?.complete && i0.naturalWidth > 0) ? i0 : null;
-      }
-      return (e.complete && e.naturalWidth > 0) ? e : null;
-    };
     // Tenta: sprite exato → cadeia de fallbacks → stance → idle
-    const result = tryGet(this.state);
+    const result = this._getAnimEntry(this.state);
     if (result) return result;
     const fallbacks = FB[this.state];
     if (fallbacks) {
       for (const fb of fallbacks) {
-        const r = tryGet(fb); if (r) return r;
+        const r = this._getAnimEntry(fb);
+        if (r) return r;
       }
     }
-    return tryGet('stance') || tryGet('idle') || null;
+    return this._getAnimEntry('stance') || this._getAnimEntry('idle') || null;
   }
 
   // ── Update ────────────────────────────────────────────────────────
@@ -259,6 +298,8 @@ class Player {
     this.frameTimer++;
     const fps = ANIM_FPS[this.state] || 8;
     if (this.frameTimer >= 60 / fps) { this.frame++; this.frameTimer = 0; }
+    this.animElapsed++;
+    this._updateTrail();
 
     if (this.invincible > 0) this.invincible--;
     if (this.dodgeInvul)     this.invincible = Math.max(this.invincible, 1);
@@ -327,10 +368,19 @@ class Player {
       if (this.inputBuffer && this.cancelWindow > 0) {
         const fn = this.inputBuffer;
         this.inputBuffer = null;
+        this.bufferTimer = 0;
         fn();
         return;
       }
       if (this.cancelWindow <= 0) this.inputBuffer = null;
+    }
+
+    // ── Expiração do input buffer ────────────────────────────────
+    // Input gravado durante um golpe (fora da cancel window) expira
+    // se não for consumido até o fim do lock.
+    if (this.bufferTimer > 0) {
+      this.bufferTimer--;
+      if (this.bufferTimer <= 0) this.inputBuffer = null;
     }
 
     // ── Hitstun ───────────────────────────────────────────────────
@@ -377,14 +427,24 @@ class Player {
       if (this.stateTimer <= 0) {
         this.locked = false;
         this.cancelWindow = 0;
-        this.inputBuffer  = null;
-        this.setState(this.onGround ? 'idle' : 'jump');
-        this.attackPriority = 0;
+        // Input bufferizado durante o golpe: executa agora se ainda
+        // estiver fresco — encadeamentos ficam mais tolerantes
+        const buf = (this.inputBuffer && this.bufferTimer > 0)
+          ? this.inputBuffer : null;
+        this.inputBuffer = null;
+        this.bufferTimer = 0;
+        if (buf) {
+          buf(); // _doAttack refaz o lock com o golpe encadeado
+        } else {
+          this.setState(this.onGround ? 'idle' : 'jump');
+          this.attackPriority = 0;
+        }
       }
     }
 
     // ── Input (só humano, não em hitstun/knockdown) ───────────────
-    if (this.isPlayer && this.hitstun <= 0 && this.state !== 'knockdown')
+    if (this.isPlayer && !this.inputDisabled &&
+        this.hitstun <= 0 && this.state !== 'knockdown')
       this._handleInput(opponent);
 
     // ── Física vertical ───────────────────────────────────────────
@@ -398,6 +458,7 @@ class Player {
       this.y  += this.vy;
 
       if (this.y >= this.groundY) {
+        const impactVy = this.vy; // velocidade do impacto (para poeira/som)
         this.y = this.groundY; this.vy = 0; this.onGround = true;
         this.isFastFalling = false;
         this.isAirborne    = false;
@@ -410,6 +471,7 @@ class Player {
         this.chaseDodgesLeft = 0;
         if (!this.locked && this.state !== 'hitstun' && this.state !== 'knockdown')
           this.setState('idle');
+        if (this.onLand) this.onLand(impactVy);
       }
     } else {
       // No chão: fast fall se segura ↓ (andar da borda)
@@ -438,6 +500,17 @@ class Player {
     const relK   = Input.wasReleased('k');
     const pressL = Input.wasPressed('l');
     const holdL  = Input.isHeld('l');
+
+    // Janela de cancelamento: durante ela, novo ataque interrompe o
+    // atual (combo). Fora dela, o input é BUFFERIZADO e executa ao fim
+    // do lock se ainda estiver fresco — combos ficam mais tolerantes.
+    const inCancel = this.locked && this.cancelWindow > 0;
+    const bufferOrRun = (fn) => {
+      if (inCancel)     { this.inputBuffer = fn; this.bufferTimer = 16; return; }
+      if (!this.locked) { fn(); return; }
+      this.inputBuffer = fn;
+      this.bufferTimer = 16;
+    };
 
     // Não processa movimento durante dodge (exceto fast fall)
     const inDodge = this.dodgeTimer > 0;
@@ -483,6 +556,7 @@ class Player {
         this.totalAirActions++;
         this.isFastFalling = false;
         this.setState('jump', 20);
+        if (this.onJump) this.onJump(false);
       } else {
         // Pulo aéreo — usa um dos pulos restantes
         const maxActions = this.walkedOffEdge ? 3 : 4;
@@ -492,6 +566,7 @@ class Player {
           this.totalAirActions++;
           this.isFastFalling = false;
           this.setState('jump', 16);
+          if (this.onJump) this.onJump(true);
         }
       }
       return;
@@ -521,7 +596,10 @@ class Player {
     // MOVIMENTO LATERAL (sempre disponível fora do dodge)
     // ─────────────────────────────────────────────────────────────
     if (!this.locked) {
-      const moveSpeed = this.isDashing ? this.speed * 2.5 : this.speed;
+      // [microteste 1D] movimento aéreo 1.5× mais rápido que o chão
+      const moveSpeed = this.isDashing ? this.speed * 3.0
+                      : !this.onGround  ? this.speed * 1.5
+                      : this.speed;
       if (left)  this.x -= moveSpeed;
       if (right) this.x += moveSpeed;
     }
@@ -540,10 +618,9 @@ class Player {
 
     // ─────────────────────────────────────────────────────────────
     // HEAVY CHARGE
-    // Ao segurar K mostra sprite de carregamento por direção:
-    //   neutro/cima → neutral_heavy_load (esfera)
-    //   baixo       → down_heavy (agachada carregando)
-    //   lateral     → side_heavy (pose do raio)
+    // Ao segurar K carrega (18f = charged); só down mostra pose:
+    //   baixo → down_heavy_load (agachado carregando magia — ÚNICA magia)
+    //   neutro/lateral → corpo a corpo, sem pose de load (só barra + charge)
     // ─────────────────────────────────────────────────────────────
     if (holdK && this.hitstun <= 0) {
       // Acumula frames de charge independente de estar locked
@@ -566,7 +643,6 @@ class Player {
     // ─────────────────────────────────────────────────────────────
     // ESPECIAL (↓+J no chão)
     // ─────────────────────────────────────────────────────────────
-    const inCancel = this.locked && this.cancelWindow > 0;
 
     // ─────────────────────────────────────────────────────────────
     // RECOVERY (K no ar)
@@ -574,77 +650,94 @@ class Player {
     // Neutro (K): dá impulso vertical + ataque recovery
     // Baixo (↓+K): ground_pound — bate no chão com launcher
     // ─────────────────────────────────────────────────────────────
-    if (!this.onGround && (!this.locked || inCancel) && relK) {
+    if (!this.onGround && relK) {
       const maxActions = this.walkedOffEdge ? 3 : 4;
       const charged    = this.heavyCharged;
 
-      // Recovery conta como ação aérea
-      if (this.recoveriesLeft > 0 && this.totalAirActions < maxActions) {
-        const isExhausted = this.recoveriesLeft < 1; // depois do 1º
-        // Recovery exausto: menos altura, mais dano
-        const fn = () => {
-          if (down) {
-            this._doAttack('ground_pound', 32, charged?26:20, 115, opponent, PRIORITY.AERIAL, true, charged);
-          } else {
-            // Recovery move: dá um pequeno impulso para cima
-            if (!down) { this.vy = Math.min(this.vy, -6); }
-            this._doAttack('recovery', 30, charged?22:16, 105, opponent, PRIORITY.AERIAL, false, charged);
-          }
-          if (charged) { this.heavyCharged = false; this.heavyHeld = 0; }
-        };
+      // Recovery conta como ação aérea — reservada na EXECUÇÃO
+      // (não no registro), para buffer expirado não desperdiçar uso
+      const fn = () => {
+        if (this.recoveriesLeft <= 0 || this.totalAirActions >= maxActions) return;
         this.recoveriesLeft--;
         this.totalAirActions++;
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
-      }
+        if (down) {
+          this._doAttack('ground_pound', 32, charged?26:20, 115, opponent, PRIORITY.AERIAL, true, charged);
+        } else if (!this.onGround) {
+          // Recovery move: dá um pequeno impulso para cima
+          this.vy = Math.min(this.vy, -6);
+          this._doAttack('recovery', 30, charged?22:16, 105, opponent, PRIORITY.AERIAL, false, charged);
+        } else {
+          // Buffer executou já no chão → vira sig neutro
+          this._doAttack('neutral_heavy', 30, charged?22:18, 110, opponent, PRIORITY.HEAVY, false, charged);
+        }
+        if (charged) { this.heavyCharged = false; this.heavyHeld = 0; }
+      };
+      bufferOrRun(fn); return;
     }
 
     // ─────────────────────────────────────────────────────────────
     // ATAQUES NO AR
     // ─────────────────────────────────────────────────────────────
-    if (!this.onGround && (!this.locked || inCancel)) {
+    if (!this.onGround) {
       if (pressJ) {
         const fn = () => {
+          // Buffer pode executar após pousar → usa equivalente de terra
+          // [microteste] neutro e baixo são o MESMO golpe (launcher)
+          if (this.onGround) {
+            if (side)      this._doAttack('side_light',   20,11, 95, opponent, PRIORITY.LIGHT);
+            else           this._doAttack('down_light',   22,12,100, opponent, PRIORITY.LIGHT, true);
+            return;
+          }
           if (down)      this._doAttack('air_down_light',   22, 10, 110, opponent, PRIORITY.LIGHT);
           else if (side) this._doAttack('air_side_light',   20,  9,  95, opponent, PRIORITY.LIGHT);
           else           this._doAttack('air_neutral_light',20,  9,  95, opponent, PRIORITY.LIGHT);
         };
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
+        bufferOrRun(fn); return;
       }
     }
 
     // ─────────────────────────────────────────────────────────────
     // ATAQUES NO CHÃO
     // ─────────────────────────────────────────────────────────────
-    if (this.onGround && (!this.locked || inCancel)) {
+    if (this.onGround) {
       if (pressJ) {
         const fn = () => {
-          if (up || (!down && !side))
-                         this._doAttack('neutral_light',18,10, 90,opponent,PRIORITY.LIGHT);
-          else if (side) this._doAttack('side_light',   20,11, 95,opponent,PRIORITY.LIGHT);
+          // Buffer pode executar após sair do chão → usa equivalente aéreo
+          if (!this.onGround) {
+            if (down)      this._doAttack('air_down_light',   22, 10, 110, opponent, PRIORITY.LIGHT);
+            else if (side) this._doAttack('air_side_light',   20,  9,  95, opponent, PRIORITY.LIGHT);
+            else           this._doAttack('air_neutral_light',20,  9,  95, opponent, PRIORITY.LIGHT);
+            return;
+          }
+          // [microteste] neutro e baixo são o MESMO golpe (launcher);
+          // neutral_light de chão deixa de existir como input
+          if (side)      this._doAttack('side_light',   20,11, 95,opponent,PRIORITY.LIGHT);
           else           this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
         };
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
+        bufferOrRun(fn); return;
       }
       // Heavy SEMPRE dispara ao soltar K (relK)
       // Charged = segurou 18+ frames antes de soltar
       if (relK) {
         const charged = this.heavyCharged;
+        // Reseta o charge na GRAVAÇÃO — buffer expirado não guarda
+        // charge "fantasma" para o próximo golpe
+        this.heavyCharged = false; this.heavyHeld = 0;
         const fn = () => {
-          // Range amplo só para Fezo (charId=2) — Henrique tem range normal
-          const isFezo = this.charId === 2;
-          const shRange = isFezo ? 240 : 115;
-          const dhRange = isFezo ? 280 : 115;
+          // Buffer pode executar no ar → cai num leve aéreo
+          if (!this.onGround) {
+            this._doAttack('air_neutral_light', 20, 9, 95, opponent, PRIORITY.LIGHT);
+            return;
+          }
+          // PADRÃO: side_heavy corpo a corpo (115) p/ todos;
+          // down_heavy é a ÚNICA magia (280, área ampla padrão Fezo) p/ todos
+          const shRange = 115;
+          const dhRange = 280;
           if (side)      this._doAttack('side_heavy',    charged?36:32, charged?24:20, shRange, opponent, PRIORITY.HEAVY, false, charged);
           else if (down) this._doAttack('down_heavy',    charged?38:34, charged?26:22, dhRange, opponent, PRIORITY.HEAVY, false, charged);
           else           this._doAttack('neutral_heavy', charged?34:30, charged?22:18, 110,     opponent, PRIORITY.HEAVY, false, charged);
-          this.heavyCharged = false; this.heavyHeld = 0;
-          if (this.state === 'down_heavy_load') {} // estado já mudado pelo _doAttack
         };
-        if (inCancel) { this.inputBuffer = fn; return; }
-        fn(); return;
+        bufferOrRun(fn); return;
       }
     }
 
@@ -704,26 +797,27 @@ class Player {
     this.locked     = false;
 
     if (pressJ) {
-      if (up || (!down && !side)) this._doAttack('neutral_light',18,10,90,opponent,PRIORITY.LIGHT);
-      else if (side)              this._doAttack('side_light',   20,11,95,opponent,PRIORITY.LIGHT);
+      // [microteste] neutro e baixo = mesmo launcher
+      if (side)                   this._doAttack('side_light',   20,11,95,opponent,PRIORITY.LIGHT);
       else                        this._doAttack('down_light',   22,12,100,opponent,PRIORITY.LIGHT,true);
     } else if (pressK) {
-      if (side)      this._doAttack('side_heavy',   32,20,240,opponent,PRIORITY.HEAVY); // range amplo: raio
-      else if (down) this._doAttack('down_heavy',   34,22,280,opponent,PRIORITY.HEAVY,false); // range amplo: raios elétricos
-      else           this._doAttack('neutral_heavy',30,18,110,opponent,PRIORITY.HEAVY);
+      if (side)      this._doAttack('side_heavy',   32,20,115,opponent,PRIORITY.HEAVY); // corpo a corpo
+      else if (down) this._doAttack('down_heavy',   34,22,280,opponent,PRIORITY.HEAVY,false); // ÚNICA magia: área ampla
+      else           this._doAttack('neutral_heavy',30,18,110,opponent,PRIORITY.HEAVY); // corpo a corpo
     }
   }
 
   // ── Inicia Dash ───────────────────────────────────────────────────
   _startDash(dir) {
     this.isDashing    = true;
-    this.dashFrames   = 12;
+    this.dashFrames   = 14;  // [microteste 1C] era 12
     this.vx           = dir * 10;
     this.dashTimer    = 0;
     this.dashLastDir  = '';
-    this.dashCooldown = 22;
+    this.dashCooldown = 16;  // [microteste 1C] era 22
     // Chase Dodge disponível após ataque: 2 se no chão
     this.chaseDodgesLeft = 2;
+    if (this.onStartDash) this.onStartDash();
   }
   // ── Executa ataque ────────────────────────────────────────────────
   // Centraliza toda a lógica de um ataque:
@@ -869,6 +963,13 @@ class Player {
         // 'grounded': padrão — fica no chão em hitstun
       }
 
+      // [microteste juggle] alvo no ar recebe "pop" mínimo pra cima,
+      // só se já não estiver subindo mais forte que isso (preserva
+      // launcher -15 e knockdown -6). Ajustar entre -3 e -7.
+      if (!this.onGround || this.isAirborne) {
+        this.vy = Math.min(this.vy, -5);
+      }
+
       if (launcher && reaction !== 'airborne') {
         this.vy = -15; this.onGround = false; this.isAirborne = true;
       }
@@ -922,10 +1023,52 @@ class Player {
     this.dodgeInvul = false; this.gcWindow = 0; this.chaseDodgesLeft = 0;
     this.dmgAccum = 0; this.vx = 0; this.attackPriority = 0;
     this.activeHitboxes = []; this._pendingHit = null; this.hitRegistered = false;
+    this.stateDuration = 0; this.animElapsed = 0;
+    this._trail = []; this.inputDisabled = false;
+  }
+
+  // ── Afterimages (rastros) ─────────────────────────────────────────
+  // Durante dash e signatures, guarda cópias recentes da pose para
+  // desenhar fantasmas atrás do personagem (sensação de velocidade).
+  _updateTrail() {
+    const active = this.isDashing || TRAIL_STATES.has(this.state);
+    if (active && this.animElapsed % 2 === 0) {
+      const spr = this._getCurrentSprite();
+      if (spr) {
+        this._trail.push({ img: spr, x: this.x, y: this.y, facing: this.facing, life: 10 });
+        if (this._trail.length > 6) this._trail.shift();
+      }
+    }
+    for (let i = this._trail.length - 1; i >= 0; i--) {
+      if (--this._trail[i].life <= 0) this._trail.splice(i, 1);
+    }
+  }
+
+  _drawTrail(ctx) {
+    if (this._trail.length === 0) return;
+    const w = this.width, h = this.height;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    for (const g of this._trail) {
+      ctx.globalAlpha = (g.life / 10) * 0.25;
+      const dx = g.x - w / 2, dy = g.y - h;
+      if (g.facing === -1) {
+        ctx.save();
+        ctx.translate(g.x, 0); ctx.scale(-1, 1); ctx.translate(-g.x, 0);
+        ctx.drawImage(g.img, dx, dy, w, h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(g.img, dx, dy, w, h);
+      }
+    }
+    ctx.restore();
   }
 
   // ── Desenho ───────────────────────────────────────────────────────
   draw(ctx) {
+    // Fantasmas primeiro — ficam atrás do sprite principal
+    this._drawTrail(ctx);
+
     const w = this.width, h = this.height;
     const drawX = this.x - w/2, drawY = this.y - h;
 
@@ -965,9 +1108,10 @@ class Player {
   //   - side_heavy_fx: parte da mão do personagem, vai para a frente
   //   - down_heavy_fx: parte dos pés, se expande horizontalmente
   _drawFxSprite(ctx, w, h) {
-    const fxKey = this.state + '_fx';
-    const fxImg = this.sprites[fxKey];
-    if (!fxImg || !fxImg.complete || !fxImg.naturalWidth) return;
+    // Aceita imagem única OU array de frames de efeito
+    // (a sequência toca uma vez, proporcional à duração do ataque)
+    const fxImg = this._getAnimEntry(this.state + '_fx');
+    if (!fxImg) return;
 
     const iw = fxImg.naturalWidth;
     const ih = fxImg.naturalHeight;
@@ -983,14 +1127,15 @@ class Player {
     let fx, fy, fw, fh;
 
     if (this.state === 'side_heavy') {
-      // Raio horizontal: escala para 260px max, na altura da mão
+      // (Legado) FX lateral — não usado no padrão atual (side é corpo a corpo).
+      // Mantido p/ compatibilidade caso algum personagem antigo tenha o arquivo.
       const scale = Math.min(260 / iw, 1.0);
       fw = iw * scale; fh = ih * scale;
-      fx = this.x + w * 0.2;          // começa na mão da Fezo
+      fx = this.x + w * 0.2;          // começa na mão do personagem
       fy = this.y - h * 0.6 - fh / 2; // meia altura do tronco
 
     } else if (this.state === 'down_heavy') {
-      // Raio de chão: escala para 220px max, rente ao chão e na frente
+      // Magia de chão (ÚNICA magia): escala para 220px max, rente ao chão e na frente
       const scale = Math.min(220 / iw, 1.0);
       fw = iw * scale; fh = ih * scale;
       fx = this.x + w * 0.1;      // levemente à frente
@@ -1242,8 +1387,8 @@ const HITSTUN_MS = {
   side_light:        180,
   down_light:        190,
   neutral_heavy:     260,
-  side_heavy:        300,  // raio — hitstun longo
-  down_heavy:        300,
+  side_heavy:        300,  // corpo a corpo — hitstun longo
+  down_heavy:        300,  // ÚNICA magia — hitstun longo
   air_neutral_light: 165,
   air_side_light:    175,
   air_down_light:    185,
@@ -1258,9 +1403,9 @@ const ATTACK_BASE_FORCE = {
   neutral_light:      7,
   side_light:         8,
   down_light:         6,
-  neutral_heavy:     18,  // esfera de energia
-  side_heavy:        24,  // raio longo — dano alto
-  down_heavy:        20,  // raios elétricos — multi-hit via range
+  neutral_heavy:     18,  // corpo a corpo
+  side_heavy:        24,  // corpo a corpo — dano alto
+  down_heavy:        20,  // ÚNICA magia — multi-hit via range amplo
   air_neutral_light:  6,
   air_side_light:     8,
   air_down_light:     5,

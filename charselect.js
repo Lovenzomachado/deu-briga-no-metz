@@ -12,14 +12,41 @@ const CharSelect = (() => {
 
   // ── Catálogo de personagens ────────────────────────────────────
   // Para adicionar personagens: empurre um objeto neste array.
-  // charId: 1=Henrique moveset, 2=Fezo moveset
+  // charId: 1=Henrique moveset, 2=Fezo moveset (hitbox idêntica agora;
+  //   diferença é só visual — down_heavy é a ÚNICA magia p/ ambos).
   // Personagens sem sprite usam o _drawPlaceholder do player.js
+  //
+  // PADRÃO DE SPRITES (recorte de vídeo):
+  //   neutral/side_heavy = CORPO A CORPO (sem magia, sem _fx obrigatório).
+  //   ÚNICA magia = down_heavy em 3 fases:
+  //     down_heavy_load_1..N (agachado carregando) +
+  //     down_heavy_1..N (golpe) + down_heavy_fx_1..N (magia no chão).
+  //   ground_pound = NO AR, DE CIMA P/ BAIXO (despenca, sem magia).
+  //
+  // ANIMAÇÃO MULTI-FRAME (frameCounts):
+  //   Opcional. Ex.: frameCounts: { neutral_light: 3, side_heavy: 4 }
+  //   Carrega <folder>/neutral_light_1.png ... _3.png como sequência
+  //   que toca uma vez por golpe (distribuída pela duração do golpe).
+  //   Sem frameCounts, usa o arquivo único <ataque>.png (compatível).
+  //   Quando recortar do vídeo, troque frameCounts: {} por
+  //   frameCounts: STANDARD_FRAME_COUNTS (definido abaixo).
+  //
+  // PADRÃO MULTI-FRAME (ative quando os PNGs _1..N existirem):
+  const STANDARD_FRAME_COUNTS = {
+    idle: 3, stance: 2, jump: 2, hitstun: 2,
+    neutral_light: 3, side_light: 3, down_light: 3,
+    neutral_heavy: 4, side_heavy: 4, // corpo a corpo
+    down_heavy: 4, down_heavy_load: 3, down_heavy_fx: 3, // ÚNICA magia
+    air_neutral_light: 2, air_side_light: 2, air_down_light: 2,
+    recovery: 3, ground_pound: 3, // corpo a corpo (ground_pound = queda de cima p/ baixo)
+  };
   const ROSTER = [
     {
       id: 'metz', name: 'HENRIQUE', subtitle: 'O FUNDADOR', charId: 1,
       folder: 'sprites/metz', portrait: 'sprites/metz/idle.png',
       color: [58, 140, 63], glow: '#00ff88',
       stats: { POWER: 7, SPEED: 8, DEFENSE: 5, SPECIAL: 7 },
+      frameCounts: {},
       walkFrames: [
         'sprites/metz/walk/walk1.png','sprites/metz/walk/walk2.png',
         'sprites/metz/walk/walk3.png','sprites/metz/walk/walk4.png',
@@ -28,15 +55,16 @@ const CharSelect = (() => {
       ],
     },
     {
-      id: 'mila', name: 'FEZO', subtitle: 'A BARISTA', charId: 2,
-      folder: 'sprites/mila', portrait: 'sprites/mila/idle.png',
+      id: 'fezo', name: 'FEZO', subtitle: 'A BARISTA', charId: 2,
+      folder: 'sprites/fezo', portrait: 'sprites/fezo/idle.png',
       color: [139, 58, 106], glow: '#ff88dd',
       stats: { POWER: 8, SPEED: 6, DEFENSE: 7, SPECIAL: 9 },
+      frameCounts: {},
       walkFrames: [
-        'sprites/mila/walk/walk1.png','sprites/mila/walk/walk2.png',
-        'sprites/mila/walk/walk3.png','sprites/mila/walk/walk4.png',
-        'sprites/mila/walk/walk5.png','sprites/mila/walk/walk6.png',
-        'sprites/mila/walk/walk7.png','sprites/mila/walk/walk8.png',
+        'sprites/fezo/walk/walk1.png','sprites/fezo/walk/walk2.png',
+        'sprites/fezo/walk/walk3.png','sprites/fezo/walk/walk4.png',
+        'sprites/fezo/walk/walk5.png','sprites/fezo/walk/walk6.png',
+        'sprites/fezo/walk/walk7.png','sprites/fezo/walk/walk8.png',
       ],
     },
     // ── Personagens sem sprite (placeholder) ──────────────────────
@@ -44,7 +72,14 @@ const CharSelect = (() => {
     { id:'billy',     name:'BILLY',      subtitle:'???', charId:2, folder:'sprites/billy',     portrait:'', color:[60,120,220],  glow:'#3388ff', stats:{POWER:6,SPEED:9,DEFENSE:5,SPECIAL:7} },
     { id:'pande',     name:'PANDE',      subtitle:'???', charId:1, folder:'sprites/pande',     portrait:'', color:[180,60,200],  glow:'#cc44ff', stats:{POWER:7,SPEED:6,DEFENSE:8,SPECIAL:6} },
     { id:'navi',      name:'NAVI',       subtitle:'???', charId:2, folder:'sprites/navi',      portrait:'', color:[60,200,180],  glow:'#00ffcc', stats:{POWER:5,SPEED:10,DEFENSE:4,SPECIAL:8} },
-    { id:'siririck',  name:'SIRIRICK',   subtitle:'???', charId:1, folder:'sprites/siririck',  portrait:'', color:[200,160,40],  glow:'#ffcc00', stats:{POWER:9,SPEED:5,DEFENSE:7,SPECIAL:6} },
+    { id:'siririck',  name:'SIRIRICK',   subtitle:'???', charId:1, folder:'sprites/siririck',  portrait:'sprites/siririck/idle.png', color:[200,160,40],  glow:'#ffcc00', stats:{POWER:9,SPEED:5,DEFENSE:7,SPECIAL:6},
+      frameCounts: { idle: 3 },
+      walkFrames: [
+        'sprites/siririck/walk/walk1.png','sprites/siririck/walk/walk2.png',
+        'sprites/siririck/walk/walk3.png','sprites/siririck/walk/walk4.png',
+        'sprites/siririck/walk/walk5.png','sprites/siririck/walk/walk6.png',
+        'sprites/siririck/walk/walk7.png','sprites/siririck/walk/walk8.png',
+      ] },
     { id:'cxntia',    name:'CXNTIA',     subtitle:'???', charId:2, folder:'sprites/cxntia',    portrait:'', color:[220,100,140], glow:'#ff66aa', stats:{POWER:6,SPEED:8,DEFENSE:6,SPECIAL:9} },
     { id:'marea',     name:'MAREA',      subtitle:'???', charId:1, folder:'sprites/marea',     portrait:'', color:[40,140,200],  glow:'#22aaff', stats:{POWER:7,SPEED:7,DEFENSE:7,SPECIAL:7} },
     { id:'rod',       name:'ROD',        subtitle:'???', charId:2, folder:'sprites/rod',       portrait:'', color:[160,60,60],   glow:'#ff2244', stats:{POWER:10,SPEED:6,DEFENSE:8,SPECIAL:4} },
