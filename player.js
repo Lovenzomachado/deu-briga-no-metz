@@ -51,6 +51,10 @@ class Player {
     this.facing   = config.facing   ?? 1;
     this.isPlayer = config.isPlayer ?? true;
     this.charId   = config.charId   ?? 1;
+    // Fonte de input deste lutador (online: local usa Input global,
+    // remoto usa a instância alimentada pelo netplay.js).
+    // Acessada via alias IN no _handleInput — nunca use o global direto.
+    this.inputSrc = config.inputSrc ?? Input;
 
     // Stats
     this.maxHP    = 500;
@@ -487,19 +491,20 @@ class Player {
   // Ordem de prioridade (maior → menor):
   //   Dodge > Pulo > Dash > Movimento > Recovery > Ataques > Idle
   _handleInput(opponent) {
-    const down   = Input.isHeld('arrowdown')  || Input.isHeld('s');
+    const IN = this.inputSrc; // local = Input global, remoto = instância do netplay
+    const down   = IN.isHeld('arrowdown')  || IN.isHeld('s');
     // 'up' para DIRECIONAMENTO de ataque: só conta se segurar sem ser press novo
-    const pressUp = Input.wasPressed('arrowup') || Input.wasPressed('w');
-    const up      = (Input.isHeld('arrowup') || Input.isHeld('w')) && !pressUp;
-    const left   = Input.isHeld('arrowleft')  || Input.isHeld('a');
-    const right  = Input.isHeld('arrowright') || Input.isHeld('d');
+    const pressUp = IN.wasPressed('arrowup') || IN.wasPressed('w');
+    const up      = (IN.isHeld('arrowup') || IN.isHeld('w')) && !pressUp;
+    const left   = IN.isHeld('arrowleft')  || IN.isHeld('a');
+    const right  = IN.isHeld('arrowright') || IN.isHeld('d');
     const side   = left || right;
-    const pressJ = Input.wasPressed('j');
-    const pressK = Input.wasPressed('k');
-    const holdK  = Input.isHeld('k');
-    const relK   = Input.wasReleased('k');
-    const pressL = Input.wasPressed('l');
-    const holdL  = Input.isHeld('l');
+    const pressJ = IN.wasPressed('j');
+    const pressK = IN.wasPressed('k');
+    const holdK  = IN.isHeld('k');
+    const relK   = IN.wasReleased('k');
+    const pressL = IN.wasPressed('l');
+    const holdL  = IN.isHeld('l');
 
     // Janela de cancelamento: durante ela, novo ataque interrompe o
     // atual (combo). Fora dela, o input é BUFFERIZADO e executa ao fim
@@ -578,8 +583,8 @@ class Player {
     // Dash aplica vx=10 por 12 frames, depois decai normalmente.
     // ─────────────────────────────────────────────────────────────
     if (!this.locked && !this.isDashing && this.dashCooldown <= 0 && this.onGround) {
-      const pressLeft  = Input.wasPressed('arrowleft')  || Input.wasPressed('a');
-      const pressRight = Input.wasPressed('arrowright') || Input.wasPressed('d');
+      const pressLeft  = IN.wasPressed('arrowleft')  || IN.wasPressed('a');
+      const pressRight = IN.wasPressed('arrowright') || IN.wasPressed('d');
       if (pressLeft) {
         if (this.dashLastDir === 'left' && this.dashTimer > 0) {
           this._startDash(-1);

@@ -589,9 +589,13 @@ function updateHUD() {
 
 let lastState = '';
 function updateStateBadge() {
-  if (player.state !== lastState) {
-    lastState = player.state;
-    stateBadge.textContent = player.state.toUpperCase().replace(/_/g,' ');
+  // Online: o badge segue o SEU lutador (esquerda = host, direita = guest).
+  const focus = Netplay.isInMatch()
+    ? (Netplay.isLocalLeft() ? player : cpu)
+    : player;
+  if (focus.state !== lastState) {
+    lastState = focus.state;
+    stateBadge.textContent = focus.state.toUpperCase().replace(/_/g,' ');
     stateBadge.classList.remove('hidden');
     clearTimeout(badgeTimeout);
     badgeTimeout = setTimeout(() => stateBadge.classList.add('hidden'), 900);
@@ -604,6 +608,7 @@ function updateStateBadge() {
 // que 1 segundo de jogo = 1 segundo real em qualquer framerate.
 let timeLeft    = TIMER_SEC;
 let timerLastMs = 0;   // timestamp do último decremento do timer
+let onlineSecMark = 0; // último segundo (em steps) já contabilizado no online
 
 // ── KO Overlay ───────────────────────────────────────────────────
 // Overlay que aparece ao fim da luta com dois botões:
@@ -629,6 +634,7 @@ function beginKO(winner) {
   triggerShake(16, 22);
   flashAlpha = 0.5;
   player.inputDisabled = true;
+  cpu.inputDisabled = true; // online: o 2º lutador também é humano
   koCineSteps = KO_CINE_LEN;
 }
 
@@ -658,10 +664,14 @@ function _closeKO() {
   if (mob) mob.style.pointerEvents = 'all';
 }
 document.getElementById('ko-rematch').addEventListener('click', () => {
+  // Online: só reinicia de comum acordo (Netplay fecha o overlay).
+  if (Netplay.isInMatch()) { Netplay.requestRematch(); return; }
   _closeKO();
   applySelection(_lastSelection);
 });
 document.getElementById('ko-charsel').addEventListener('click', () => {
+  // Online: volta à escolha de personagens nos dois lados.
+  if (Netplay.isInMatch()) { Netplay.requestRepick(); return; }
   _closeKO();
   CharSelect.show(sel => { _lastSelection = sel; applySelection(sel); }, false);
 });
@@ -736,7 +746,16 @@ function applySelection(sel) {
   player.loadSprites(makeSprites(sel.player.folder, sel.player.walkFrames, sel.player.frameCounts));
   cpu.loadSprites(makeSprites(sel.cpu.folder, sel.cpu.walkFrames, sel.cpu.frameCounts));
 
-  document.querySelector('#player-hud .hud-name').textContent = sel.player.name;
+  // Online: mostra os dois nomes e marca quem é você.
+  if (Netplay.isInMatch()) {
+    const tagL = Netplay.isLocalLeft() ? ' (VOCÊ)' : '';
+    const tagR = Netplay.isLocalLeft() ? '' : ' (VOCÊ)';
+    document.querySelector('#player-hud .hud-name').textContent = sel.player.name + tagL;
+    document.querySelector('#cpu-hud .hud-name').textContent    = sel.cpu.name + tagR;
+  } else {
+    document.querySelector('#player-hud .hud-name').textContent = sel.player.name;
+    document.querySelector('#cpu-hud .hud-name').textContent    = 'CPU';
+  }
 
   const resetPlayer = (p, px, py) => {
     p.hp = p.maxHP; p.x = px; p.y = groundY;
@@ -748,8 +767,8 @@ function applySelection(sel) {
   cpuAIState = 'idle'; cpuComboStep = 0; cpuComboSeq = []; cpuActionTimer = 0;
   cpu.facing = -1;
 
-  timeLeft = TIMER_SEC; timerLastMs = 0; gameOver = false;
-  koCineSteps = 0; player.inputDisabled = false;
+  timeLeft = TIMER_SEC; timerLastMs = 0; onlineSecMark = 0; gameOver = false;
+  koCineSteps = 0; player.inputDisabled = false; cpu.inputDisabled = false;
   hitTexts.length = 0; flashAlpha = 0;
   updateHUD();
   startMusic();
@@ -776,9 +795,12 @@ function gameLoop(timestamp) {
   accumulator += elapsed * (koCineSteps > 0 ? KO_SLOWMO : 1);
 
   // Máximo 3 steps por frame — evita spiral of death em lag spikes
-  // mas garante que 30fps rode 2 steps (cobrindo os 33ms do frame)
+  // mas garante que 30fps rode 2 steps (cobrindo os 33ms do frame).
+  // Online: sem input remoto para o step atual, espera SEM gastar o
+  // acumulador (o jogo desacelera um pouco em vez de dessincronizar).
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < 3) {
+    if (Netplay.isInMatch() && !Netplay.canStep()) break;
     accumulator -= FIXED_DT;
     gameStep();
     // Contagem do cinemático de KO → mostra overlay ao terminar
@@ -817,14 +839,25 @@ function gameLoop(timestamp) {
   ctx.restore();
   drawFlash();
 
-  // Timer baseado em tempo real (ms) — funciona igual em qualquer framerate
+  // Timer: offline usa tempo real (ms); online usa steps da simulação
+  // (steps são idênticos nos dois lados — o timeout sai junto).
   if (!gameOver) {
-    if (timerLastMs === 0) timerLastMs = lastTime;
-    if (lastTime - timerLastMs >= 1000) {
-      timerLastMs += 1000; // avança exatamente 1s (sem drift)
-      timeLeft = Math.max(0, timeLeft - 1);
-      timerEl.textContent = String(timeLeft).padStart(2, '0');
-      if (timeLeft <= 0) beginKO(player.hp >= cpu.hp ? 'PLAYER' : 'CPU');
+    if (Netplay.isInMatch()) {
+      const s = Netplay.matchSeconds();
+      if (s > onlineSecMark) {
+        onlineSecMark = s;
+        timeLeft = Math.max(0, timeLeft - 1);
+        timerEl.textContent = String(timeLeft).padStart(2, '0');
+        if (timeLeft <= 0) beginKO(player.hp >= cpu.hp ? 'PLAYER' : 'CPU');
+      }
+    } else {
+      if (timerLastMs === 0) timerLastMs = lastTime;
+      if (lastTime - timerLastMs >= 1000) {
+        timerLastMs += 1000; // avança exatamente 1s (sem drift)
+        timeLeft = Math.max(0, timeLeft - 1);
+        timerEl.textContent = String(timeLeft).padStart(2, '0');
+        if (timeLeft <= 0) beginKO(player.hp >= cpu.hp ? 'PLAYER' : 'CPU');
+      }
     }
     if (player.hp <= 0) beginKO('CPU');
     if (cpu.hp    <= 0) beginKO('PLAYER');
@@ -840,6 +873,26 @@ function gameLoop(timestamp) {
 // Durante o cinemático de KO: física continua (corpos voam em slowmo),
 // mas sem IA, sem novos hits e com input travado (inputDisabled).
 function gameStep() {
+  // ── Online (lockstep): sem IA — os dois lutadores são humanos ────
+  // beginStep() injeta os inputs do step atual (amostrados com delay
+  // igual pros dois) e só é chamado com o pacote remoto em mãos.
+  if (Netplay.isInMatch()) {
+    Netplay.beginStep();
+    const cine = koCineSteps > 0;
+    if (!gameOver || cine) {
+      player.update(cpu);
+      cpu.update(player);
+      // Colisões só durante a luta normal (sem novos hits no cinemático)
+      if (!gameOver) {
+        player.checkHitboxCollision(cpu);
+        cpu.checkHitboxCollision(player);
+      }
+    }
+    Netplay.endStep();
+    Input.flush();
+    RemoteInput.flush();
+    return;
+  }
   const cine = koCineSteps > 0;
   if (!gameOver || cine) {
     player.update(cpu);
@@ -861,7 +914,9 @@ gameOver = true;
 updateHUD();
 requestAnimationFrame(gameLoop);
 
-// Fluxo: Intro → CharSelect → Luta
-Intro.show(() => {
-  CharSelect.show(applySelection, false);
+// Fluxo: Lobby (offline → Intro → CharSelect → Luta / online → sala → picks → luta)
+Netplay.boot(() => {
+  Intro.show(() => {
+    CharSelect.show(applySelection, false);
+  });
 });
